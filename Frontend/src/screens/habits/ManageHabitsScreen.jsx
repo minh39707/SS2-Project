@@ -65,7 +65,9 @@ export default function ManageHabitsScreen() {
     let isMounted = true;
 
     const fetchHabits = async () => {
-      setIsLoading(true);
+      if (!habits.length) {
+        setIsLoading(true);
+      }
 
       try {
         const response = await listHabits(userProfile);
@@ -95,7 +97,7 @@ export default function ManageHabitsScreen() {
     return () => {
       isMounted = false;
     };
-  }, [completed, isFocused, userProfile]);
+  }, [completed, habits.length, isFocused, userProfile]);
 
   const handleRefresh = async () => {
     if (!userProfile?.id) {
@@ -105,7 +107,7 @@ export default function ManageHabitsScreen() {
     setIsRefreshing(true);
 
     try {
-      const response = await listHabits(userProfile);
+      const response = await listHabits(userProfile, { forceRefresh: true });
       setHabits(response?.habits ?? []);
       setError(null);
     } catch (refreshError) {

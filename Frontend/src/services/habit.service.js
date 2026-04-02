@@ -1,7 +1,46 @@
 import { colors } from "@/src/constants/colors";
 import { apiRequest } from "@/src/services/api";
 import { loadOnboardingState } from "@/src/services/onboardingStorage";
+import {
+  invalidateCachedResources,
+  loadCachedResource,
+  setCachedResource,
+} from "@/src/services/resourceCache";
 import { getHabitDisplayName } from "@/src/utils/onboarding";
+
+const DASHBOARD_CACHE_TTL_MS = 45_000;
+const HABITS_LIST_CACHE_TTL_MS = 45_000;
+const HABIT_DETAIL_CACHE_TTL_MS = 45_000;
+
+function getDashboardCacheKey(userId) {
+  return `dashboard:${userId ?? "guest"}`;
+}
+
+function getHabitsListCacheKey(userId) {
+  return `habits-list:${userId}`;
+}
+
+function getHabitDetailCacheKey(userId, habitId) {
+  return `habit-detail:${userId}:${habitId}`;
+}
+
+function getHabitCacheKeys(userId, habitId = null) {
+  const keys = [getDashboardCacheKey(userId)];
+
+  if (userId) {
+    keys.push(getHabitsListCacheKey(userId));
+  }
+
+  if (userId && habitId) {
+    keys.push(getHabitDetailCacheKey(userId, habitId));
+  }
+
+  return keys;
+}
+
+export function invalidateHabitCaches(userId, habitId = null) {
+  invalidateCachedResources(getHabitCacheKeys(userId, habitId));
+}
 
 function buildMonthLabel() {
   return new Intl.DateTimeFormat("en-US", {
@@ -101,43 +140,14 @@ function buildFallbackDashboard(data) {
   };
 }
 
-export async function getDashboardData() {
-  const persistedState = await loadOnboardingState();
-  const userProfile = persistedState?.userProfile ?? null;
-
-  if (!userProfile?.id) {
-    return buildFallbackDashboard(persistedState?.data ?? null);
-  }
-
-  try {
-    return await apiRequest("/dashboard", {
-      method: "GET",
-      userId: userProfile.id,
-      authToken: userProfile.accessToken,
-    });
-  } catch (error) {
-    if (__DEV__) {
-      console.warn("Falling back to local dashboard data.", error);
-    }
-
-    return buildFallbackDashboard(persistedState?.data ?? null);
-  }
-}
-
-export async function createHabit(payload, profileOverride = null) {
+async function resolveAuthenticatedProfile(profileOverride = null) {
   const persistedState = await loadOnboardingState();
   const userProfile = profileOverride ?? persistedState?.userProfile ?? null;
 
-  if (!userProfile?.id) {
-    throw new Error("Please sign in before creating a new habit.");
-  }
-
-  return apiRequest("/habits", {
-    method: "POST",
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
-    body: payload,
-  });
+  return {
+    persistedState,
+    userProfile,
+  };
 }
 
 function getAuthenticatedProfile(persistedState, profileOverride) {
@@ -150,47 +160,124 @@ function getAuthenticatedProfile(persistedState, profileOverride) {
   return userProfile;
 }
 
-export async function listHabits(profileOverride = null) {
-  const persistedState = await loadOnboardingState();
-  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+export async function getDashboardData(options = {}) {
+  const { persistedState, userProfile } = await resolveAuthenticatedProfile();
+  const cacheKey = getDashboardCacheKey(userProfile?.id);
 
-  return apiRequest("/habits", {
-    method: "GET",
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
-  });
+  if (!userProfile?.id) {
+    return setCachedResource(
+      cacheKey,
+      buildFallbackDashboard(persistedState?.data ?? null),
+      DASHBOARD_CACHE_TTL_MS,
+    );
+  }
+
+  return loadCachedResource(
+    cacheKey,
+    async () => {
+      try {
+        return await apiRequest("/dashboard", {
+          method: "GET",
+          userId: userProfile.id,
+          authToken: userProfile.accessToken,
+        });
+      } catch (error) {
+        if (__DEV__) {
+          console.warn("Falling back to local dashboard data.", error);
+        }
+
+        return buildFallbackDashboard(persistedState?.data ?? null);
+      }
+    },
+    {
+      ttlMs: DASHBOARD_CACHE_TTL_MS,
+      forceRefresh: options.forceRefresh ?? false,
+    },
+  );
 }
 
-export async function getHabitById(habitId, profileOverride = null) {
+export async function createHabit(payload, profileOverride = null) {
   const persistedState = await loadOnboardingState();
-  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+  const userProfile = profileOverride ?? persistedState?.userProfile ?? null;
 
-  return apiRequest(`/habits/${habitId}`, {
-    method: "GET",
+  if (!userProfile?.id) {
+    throw new Error("Please sign in before creating a new habit.");
+  }
+
+  const response = await apiRequest("/habits", {
+    method: "POST",
     userId: userProfile.id,
     authToken: userProfile.accessToken,
+    body: payload,
   });
+
+  invalidateHabitCaches(userProfile.id);
+  return response;
+}
+
+export async function listHabits(profileOverride = null, options = {}) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+  const cacheKey = getHabitsListCacheKey(userProfile.id);
+
+  return loadCachedResource(
+    cacheKey,
+    () =>
+      apiRequest("/habits", {
+        method: "GET",
+        userId: userProfile.id,
+        authToken: userProfile.accessToken,
+      }),
+    {
+      ttlMs: HABITS_LIST_CACHE_TTL_MS,
+      forceRefresh: options.forceRefresh ?? false,
+    },
+  );
+}
+
+export async function getHabitById(habitId, profileOverride = null, options = {}) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+  const cacheKey = getHabitDetailCacheKey(userProfile.id, habitId);
+
+  return loadCachedResource(
+    cacheKey,
+    () =>
+      apiRequest(`/habits/${habitId}`, {
+        method: "GET",
+        userId: userProfile.id,
+        authToken: userProfile.accessToken,
+      }),
+    {
+      ttlMs: HABIT_DETAIL_CACHE_TTL_MS,
+      forceRefresh: options.forceRefresh ?? false,
+    },
+  );
 }
 
 export async function updateHabit(habitId, payload, profileOverride = null) {
   const persistedState = await loadOnboardingState();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
-
-  return apiRequest(`/habits/${habitId}`, {
+  const response = await apiRequest(`/habits/${habitId}`, {
     method: "PATCH",
     userId: userProfile.id,
     authToken: userProfile.accessToken,
     body: payload,
   });
+
+  invalidateHabitCaches(userProfile.id, habitId);
+  return response;
 }
 
 export async function deleteHabit(habitId, profileOverride = null) {
   const persistedState = await loadOnboardingState();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
-
-  return apiRequest(`/habits/${habitId}`, {
+  const response = await apiRequest(`/habits/${habitId}`, {
     method: "DELETE",
     userId: userProfile.id,
     authToken: userProfile.accessToken,
   });
+
+  invalidateHabitCaches(userProfile.id, habitId);
+  return response;
 }

@@ -81,7 +81,7 @@ export default function AssistantChat({
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState(starterMessages);
   const chatHeight = Math.min(height * 0.58, 460);
-  const bubbleTop = Math.max(insets.top + 180, height * 0.36);
+  const bubbleBottom = Math.max(insets.bottom + 116, 132);
 
   const openChat = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -120,7 +120,7 @@ export default function AssistantChat({
           onPress={openChat}
           style={({ pressed }) => [
             styles.bubble,
-            { top: bubbleTop },
+            { bottom: bubbleBottom },
             pressed && styles.bubblePressed,
           ]}
         >
@@ -285,7 +285,7 @@ export default function AssistantChat({
 const styles = StyleSheet.create({
   bubble: {
     position: "absolute",
-    right: -18,
+    right: 8,
     width: 78,
     height: 78,
     borderRadius: 39,

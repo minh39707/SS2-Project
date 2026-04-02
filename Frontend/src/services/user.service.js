@@ -1,6 +1,21 @@
 import { colors } from "@/src/constants/colors";
 import { apiRequest } from "@/src/services/api";
 import { loadOnboardingState } from "@/src/services/onboardingStorage";
+import {
+  loadCachedResource,
+  setCachedResource,
+} from "@/src/services/resourceCache";
+
+const USER_PROFILE_CACHE_TTL_MS = 60_000;
+const USER_STATS_CACHE_TTL_MS = 45_000;
+
+function getCurrentUserCacheKey(userId) {
+  return `user-profile:${userId ?? "guest"}`;
+}
+
+function getUserStatsCacheKey(userId) {
+  return `user-stats:${userId ?? "guest"}`;
+}
 
 function buildFallbackProfile(name, completed, avatarUrl = null) {
   return {
@@ -38,35 +53,49 @@ function buildFallbackStats(completed) {
   ];
 }
 
-export async function getCurrentUser() {
+export async function getCurrentUser(options = {}) {
   const persistedState = await loadOnboardingState();
   const userProfile = persistedState?.userProfile ?? null;
+  const cacheKey = getCurrentUserCacheKey(userProfile?.id);
 
   if (!userProfile?.id) {
-    return buildFallbackProfile(
-      userProfile?.name,
-      persistedState?.completed,
-      userProfile?.avatarUrl ?? null,
+    return setCachedResource(
+      cacheKey,
+      buildFallbackProfile(
+        userProfile?.name,
+        persistedState?.completed,
+        userProfile?.avatarUrl ?? null,
+      ),
+      USER_PROFILE_CACHE_TTL_MS,
     );
   }
 
-  try {
-    return await apiRequest("/users/me", {
-      method: "GET",
-      userId: userProfile.id,
-      authToken: userProfile.accessToken,
-    });
-  } catch (error) {
-    if (__DEV__) {
-      console.warn("Falling back to local profile data.", error);
-    }
+  return loadCachedResource(
+    cacheKey,
+    async () => {
+      try {
+        return await apiRequest("/users/me", {
+          method: "GET",
+          userId: userProfile.id,
+          authToken: userProfile.accessToken,
+        });
+      } catch (error) {
+        if (__DEV__) {
+          console.warn("Falling back to local profile data.", error);
+        }
 
-    return buildFallbackProfile(
-      userProfile.name,
-      persistedState?.completed,
-      userProfile?.avatarUrl ?? null,
-    );
-  }
+        return buildFallbackProfile(
+          userProfile.name,
+          persistedState?.completed,
+          userProfile?.avatarUrl ?? null,
+        );
+      }
+    },
+    {
+      ttlMs: USER_PROFILE_CACHE_TTL_MS,
+      forceRefresh: options.forceRefresh ?? false,
+    },
+  );
 }
 
 export async function updateCurrentUserAvatar(avatarUrl) {
@@ -77,7 +106,7 @@ export async function updateCurrentUserAvatar(avatarUrl) {
     throw new Error("Please sign in before changing your avatar.");
   }
 
-  return apiRequest("/users/me", {
+  const updatedProfile = await apiRequest("/users/me", {
     method: "PATCH",
     userId: userProfile.id,
     authToken: userProfile.accessToken,
@@ -85,6 +114,14 @@ export async function updateCurrentUserAvatar(avatarUrl) {
       avatarUrl,
     },
   });
+
+  setCachedResource(
+    getCurrentUserCacheKey(userProfile.id),
+    updatedProfile,
+    USER_PROFILE_CACHE_TTL_MS,
+  );
+
+  return updatedProfile;
 }
 
 export async function uploadCurrentUserAvatar({ contentType, imageBase64 }) {
@@ -95,7 +132,7 @@ export async function uploadCurrentUserAvatar({ contentType, imageBase64 }) {
     throw new Error("Please sign in before uploading an avatar.");
   }
 
-  return apiRequest("/users/me/avatar-upload", {
+  const updatedProfile = await apiRequest("/users/me/avatar-upload", {
     method: "POST",
     userId: userProfile.id,
     authToken: userProfile.accessToken,
@@ -105,27 +142,49 @@ export async function uploadCurrentUserAvatar({ contentType, imageBase64 }) {
       imageBase64,
     },
   });
+
+  setCachedResource(
+    getCurrentUserCacheKey(userProfile.id),
+    updatedProfile,
+    USER_PROFILE_CACHE_TTL_MS,
+  );
+
+  return updatedProfile;
 }
 
-export async function getUserStats() {
+export async function getUserStats(options = {}) {
   const persistedState = await loadOnboardingState();
   const userProfile = persistedState?.userProfile ?? null;
+  const cacheKey = getUserStatsCacheKey(userProfile?.id);
 
   if (!userProfile?.id) {
-    return buildFallbackStats(persistedState?.completed);
+    return setCachedResource(
+      cacheKey,
+      buildFallbackStats(persistedState?.completed),
+      USER_STATS_CACHE_TTL_MS,
+    );
   }
 
-  try {
-    return await apiRequest("/users/me/stats", {
-      method: "GET",
-      userId: userProfile.id,
-      authToken: userProfile.accessToken,
-    });
-  } catch (error) {
-    if (__DEV__) {
-      console.warn("Falling back to local stats data.", error);
-    }
+  return loadCachedResource(
+    cacheKey,
+    async () => {
+      try {
+        return await apiRequest("/users/me/stats", {
+          method: "GET",
+          userId: userProfile.id,
+          authToken: userProfile.accessToken,
+        });
+      } catch (error) {
+        if (__DEV__) {
+          console.warn("Falling back to local stats data.", error);
+        }
 
-    return buildFallbackStats(persistedState?.completed);
-  }
+        return buildFallbackStats(persistedState?.completed);
+      }
+    },
+    {
+      ttlMs: USER_STATS_CACHE_TTL_MS,
+      forceRefresh: options.forceRefresh ?? false,
+    },
+  );
 }

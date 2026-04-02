@@ -28,6 +28,7 @@ import {
   getDefaultTimeForPeriod,
   isOnboardingReadyForSave,
 } from "@/src/utils/onboarding";
+import { clearResourceCache } from "@/src/services/resourceCache";
 const initialPersistedState = {
   data: INITIAL_ONBOARDING_DATA,
   onboardingCompleted: false,
@@ -222,6 +223,7 @@ export function OnboardingProvider({ children }) {
     }));
   };
   const persistAuthenticatedProfile = async (profile, method) => {
+    clearResourceCache();
     const nextScope = getOnboardingScope(profile.id);
     const savedScopedState = normalizePersistedState(
       await loadOnboardingState(nextScope),
@@ -357,6 +359,7 @@ export function OnboardingProvider({ children }) {
       }
     }
     const guestScope = getOnboardingScope(null);
+    clearResourceCache();
     setStorageScope(guestScope);
     setPersistedState(initialPersistedState);
     setSaveError(null);

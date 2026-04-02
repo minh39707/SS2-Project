@@ -3,6 +3,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const ONBOARDING_STORAGE_KEY = "habit-app:onboarding-state-v2";
 const LEGACY_ONBOARDING_STORAGE_KEY = "habit-app:onboarding-state";
 const GUEST_SCOPE = "guest";
+let cachedEnvelope = null;
+let pendingEnvelopeRead = null;
 
 function buildEmptyEnvelope() {
   return {
@@ -12,29 +14,51 @@ function buildEmptyEnvelope() {
 }
 
 async function readEnvelope() {
+  if (cachedEnvelope) {
+    return cachedEnvelope;
+  }
+
+  if (pendingEnvelopeRead) {
+    return pendingEnvelopeRead;
+  }
+
+  pendingEnvelopeRead = (async () => {
   const rawValue = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
 
-  if (rawValue) {
-    return JSON.parse(rawValue);
+    if (rawValue) {
+      cachedEnvelope = JSON.parse(rawValue);
+      return cachedEnvelope;
+    }
+
+    const legacyValue = await AsyncStorage.getItem(LEGACY_ONBOARDING_STORAGE_KEY);
+
+    if (!legacyValue) {
+      cachedEnvelope = buildEmptyEnvelope();
+      return cachedEnvelope;
+    }
+
+    cachedEnvelope = {
+      currentScope: GUEST_SCOPE,
+      scopes: {
+        [GUEST_SCOPE]: JSON.parse(legacyValue),
+      },
+    };
+
+    return cachedEnvelope;
+  })();
+
+  try {
+    return await pendingEnvelopeRead;
+  } finally {
+    pendingEnvelopeRead = null;
   }
-
-  const legacyValue = await AsyncStorage.getItem(LEGACY_ONBOARDING_STORAGE_KEY);
-
-  if (!legacyValue) {
-    return buildEmptyEnvelope();
-  }
-
-  return {
-    currentScope: GUEST_SCOPE,
-    scopes: {
-      [GUEST_SCOPE]: JSON.parse(legacyValue),
-    },
-  };
 }
 
 async function writeEnvelope(envelope) {
   await AsyncStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(envelope));
   await AsyncStorage.removeItem(LEGACY_ONBOARDING_STORAGE_KEY);
+  cachedEnvelope = envelope;
+  pendingEnvelopeRead = null;
 }
 
 export function getOnboardingScope(userId) {
@@ -75,6 +99,8 @@ export async function clearOnboardingState(scope = null) {
   if (!scope) {
     await AsyncStorage.removeItem(ONBOARDING_STORAGE_KEY);
     await AsyncStorage.removeItem(LEGACY_ONBOARDING_STORAGE_KEY);
+    cachedEnvelope = null;
+    pendingEnvelopeRead = null;
     return;
   }
 

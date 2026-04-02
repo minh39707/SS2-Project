@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Card from "@/src/components/ui/Card";
 import ProfileAvatar from "@/src/components/ui/ProfileAvatar";
 import Button from "@/src/components/ui/Button";
@@ -29,6 +30,7 @@ import { AVATAR_PRESETS } from "@/src/utils/avatar";
 export default function SettingsScreen() {
   const router = useRouter();
   const isFocused = useIsFocused();
+  const insets = useSafeAreaInsets();
   const {
     completed,
     hydrated,
@@ -68,7 +70,9 @@ export default function SettingsScreen() {
     let isMounted = true;
 
     const loadProfile = async () => {
-      setLoadingProfile(true);
+      if (!profile) {
+        setLoadingProfile(true);
+      }
 
       try {
         const result = await getCurrentUser();
@@ -104,7 +108,7 @@ export default function SettingsScreen() {
     return () => {
       isMounted = false;
     };
-  }, [completed, hydrated, isFocused, updateUserProfile, userProfile?.id]);
+  }, [completed, hydrated, isFocused, profile, updateUserProfile, userProfile?.id]);
 
   const providerLabel = useMemo(() => {
     if (userProfile?.authMethod === "google") {
@@ -159,14 +163,46 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleUseProviderPhoto = () => {
+  const handleUseProviderPhoto = async () => {
     if (!providerAvatarUrl) {
       return;
     }
 
+    if (savingAvatar || uploadingAvatar) {
+      return;
+    }
+
+    if (providerAvatarUrl === (profile?.avatarUrl ?? null)) {
+      setSelectedAvatarUrl(providerAvatarUrl);
+      setError(null);
+      setSuccessMessage("You are already using your account photo.");
+      return;
+    }
+
+    setSavingAvatar(true);
     setSelectedAvatarUrl(providerAvatarUrl);
     setError(null);
     setSuccessMessage(null);
+
+    try {
+      const updatedProfile = await updateCurrentUserAvatar(providerAvatarUrl);
+      setProfile(updatedProfile);
+      updateUserProfile({
+        name: updatedProfile.name,
+        avatarUrl: updatedProfile.avatarUrl ?? null,
+      });
+      setSelectedAvatarUrl(updatedProfile.avatarUrl ?? null);
+      setSuccessMessage("Account photo applied.");
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to use your account photo right now.",
+      );
+      setSelectedAvatarUrl(profile?.avatarUrl ?? null);
+    } finally {
+      setSavingAvatar(false);
+    }
   };
 
   const handleUploadFromDevice = async () => {
@@ -186,7 +222,7 @@ export default function SettingsScreen() {
     }
 
     const pickerResult = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.7,
@@ -261,7 +297,10 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        { paddingBottom: Math.max(insets.bottom + 168, spacing.xxl * 3) },
+      ]}
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
@@ -316,7 +355,7 @@ export default function SettingsScreen() {
           <View style={styles.actionChips}>
             {providerAvatarUrl ? (
               <Pressable
-                onPress={handleUseProviderPhoto}
+                onPress={() => void handleUseProviderPhoto()}
                 style={({ pressed }) => [
                   styles.resetChip,
                   pressed && styles.resetChipPressed,
@@ -450,7 +489,6 @@ const styles = StyleSheet.create({
   content: {
     padding: spacing.lg,
     gap: spacing.lg,
-    paddingBottom: spacing.xxl * 2,
   },
   headerBlock: {
     gap: 6,
