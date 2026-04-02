@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { INITIAL_ONBOARDING_DATA } from "@/src/constants/onboarding";
 import {
   completeOAuthRedirect,
@@ -76,6 +76,7 @@ export function OnboardingProvider({ children }) {
   const [hydrated, setHydrated] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
+  const oauthCompletionRef = useRef(null);
   useEffect(() => {
     let isMounted = true;
     const hydrate = async () => {
@@ -248,23 +249,52 @@ export function OnboardingProvider({ children }) {
     setPersistedState(nextState);
     await setCurrentOnboardingScope(nextScope);
   };
+  const runSharedOAuthFlow = async (factory) => {
+    if (oauthCompletionRef.current) {
+      return oauthCompletionRef.current;
+    }
+
+    const promise = (async () => {
+      try {
+        return await factory();
+      } finally {
+        oauthCompletionRef.current = null;
+      }
+    })();
+
+    oauthCompletionRef.current = promise;
+    return promise;
+  };
   const authenticate = async (payload) => {
     setIsSaving(true);
     setSaveError(null);
     try {
       let profile;
       if (payload.method === "google") {
-        profile = await signInWithGoogle();
+        profile = await runSharedOAuthFlow(async () => {
+          const oauthProfile = await signInWithGoogle();
+          await persistAuthenticatedProfile(oauthProfile, payload.method);
+          return oauthProfile;
+        });
       } else if (payload.method === "facebook") {
-        profile = await signInWithFacebook();
+        profile = await runSharedOAuthFlow(async () => {
+          const oauthProfile = await signInWithFacebook();
+          await persistAuthenticatedProfile(oauthProfile, payload.method);
+          return oauthProfile;
+        });
       } else if (payload.method === "github") {
-        profile = await signInWithGitHub();
+        profile = await runSharedOAuthFlow(async () => {
+          const oauthProfile = await signInWithGitHub();
+          await persistAuthenticatedProfile(oauthProfile, payload.method);
+          return oauthProfile;
+        });
       } else if (payload.mode === "signUp") {
         profile = await signUpWithEmail(payload.payload);
+        await persistAuthenticatedProfile(profile, payload.method);
       } else {
         profile = await signInWithEmail(payload.payload);
+        await persistAuthenticatedProfile(profile, payload.method);
       }
-      await persistAuthenticatedProfile(profile, payload.method);
     } catch (error) {
       setSaveError(
         error instanceof Error
@@ -280,8 +310,14 @@ export function OnboardingProvider({ children }) {
     setIsSaving(true);
     setSaveError(null);
     try {
-      const profile = await completeOAuthRedirect(redirectUrl);
-      await persistAuthenticatedProfile(profile, profile.authMethod ?? "oauth");
+      const profile = await runSharedOAuthFlow(async () => {
+        const oauthProfile = await completeOAuthRedirect(redirectUrl);
+        await persistAuthenticatedProfile(
+          oauthProfile,
+          oauthProfile.authMethod ?? "oauth",
+        );
+        return oauthProfile;
+      });
       return profile;
     } catch (error) {
       setSaveError(

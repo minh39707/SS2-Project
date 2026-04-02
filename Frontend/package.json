@@ -4,8 +4,11 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
+    "configure:lan": "node ./scripts/configure-lan.js",
+    "start:lan": "npm run configure:lan && expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
+    "android:lan": "npm run configure:lan && expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint"

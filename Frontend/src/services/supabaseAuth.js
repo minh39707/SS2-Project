@@ -21,6 +21,25 @@ function getSearchParams(urlPart = "") {
   return new URLSearchParams(normalizedValue);
 }
 
+function buildApiBaseUrlForHost(hostname) {
+  return `http://${hostname}:4000/api`;
+}
+
+function getApiBaseUrlFromRedirect(redirectUrl) {
+  try {
+    const parsedUrl = new URL(redirectUrl);
+    const hostname = parsedUrl.hostname;
+
+    if (!hostname) {
+      return null;
+    }
+
+    return buildApiBaseUrlForHost(hostname);
+  } catch {
+    return null;
+  }
+}
+
 function buildProfile(user, session, fallbackName) {
   const authMethod =
     user?.app_metadata?.provider ?? user?.identities?.[0]?.provider ?? "oauth";
@@ -85,7 +104,7 @@ async function finalizeOAuthSession(redirectUrl) {
   throw new Error("Authentication completed but no session data was returned.");
 }
 
-async function syncOAuthProfile(provider) {
+async function syncOAuthProfile(provider, apiBaseUrlOverride = null) {
   const {
     data: { session },
     error: sessionError,
@@ -106,8 +125,10 @@ async function syncOAuthProfile(provider) {
     "oauth";
 
   const response = await apiRequest("/auth/oauth-sync", {
+    apiBaseUrl: apiBaseUrlOverride,
     method: "POST",
     authToken: session.access_token,
+    timeoutMs: 20000,
     body: {
       provider: resolvedProvider,
     },
@@ -174,12 +195,12 @@ export async function signInWithOAuth(provider) {
 
   await finalizeOAuthSession(result.url);
 
-  return syncOAuthProfile(provider);
+  return syncOAuthProfile(provider, getApiBaseUrlFromRedirect(result.url));
 }
 
 export async function completeOAuthSignInFromRedirect(redirectUrl) {
   await finalizeOAuthSession(redirectUrl);
-  return syncOAuthProfile();
+  return syncOAuthProfile(null, getApiBaseUrlFromRedirect(redirectUrl));
 }
 
 export async function signOutFromSupabase() {

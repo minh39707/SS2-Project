@@ -50,12 +50,22 @@ Create `Frontend/.env` with:
 ```env
 EXPO_PUBLIC_SUPABASE_URL=your_supabase_project_url
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-EXPO_PUBLIC_API_URL=http://localhost:4000/api
 ```
 
 Notes:
 - `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` are required.
-- The app currently resolves the backend base URL from the Expo host for local development, so `EXPO_PUBLIC_API_URL` is optional for the current setup.
+- The app resolves the backend base URL from the Expo host for local LAN development, so `EXPO_PUBLIC_API_URL` is optional and should usually be left unset in Expo Go.
+- Optional overrides:
+
+```env
+# Exact backend URL override
+EXPO_PUBLIC_API_URL=http://192.168.1.10:4000/api
+
+# Or compose it from host/port
+EXPO_PUBLIC_API_HOST=192.168.1.10
+EXPO_PUBLIC_API_PORT=4000
+EXPO_PUBLIC_API_SCHEME=http
+```
 
 ## Local Development
 
@@ -75,9 +85,11 @@ Useful shortcuts:
 
 ```bash
 npm run android
+npm run android:lan
 npm run ios
 npm run web
 npm run lint
+npm run start:lan
 ```
 
 ## Backend Requirement
@@ -95,6 +107,25 @@ Default backend URL assumptions in the app:
 - Expo device on LAN: `http://<your-dev-machine-ip>:4000/api`
 - Android emulator: `http://10.0.2.2:4000/api`
 - iOS simulator / local web: `http://localhost:4000/api`
+
+Recommended setup for multiple devices on the same Wi-Fi:
+- Run `npm run start:lan` to auto-detect your current LAN IP and write it to `.env.local`.
+- This generated `.env.local` is ignored by git, so each developer or machine can keep its own network config.
+- Keep the backend running on your dev machine at port `4000`.
+- Only set `EXPO_PUBLIC_API_URL` or `EXPO_PUBLIC_API_HOST` when you need to point every device to a fixed backend host manually.
+
+Example:
+
+```bash
+cd Frontend
+npm run start:lan
+```
+
+Or, if Expo is already running:
+
+```bash
+npm run configure:lan
+```
 
 ## OAuth Setup Notes
 
@@ -147,3 +178,7 @@ npx expo start -c
 ```
 
 If the app cannot reach the API, verify that your phone and dev machine are on the same network and that port `4000` is reachable.
+
+If you switch between emulator and real devices often:
+- Prefer `npm run start:lan` for Expo Go on LAN.
+- Use `EXPO_PUBLIC_API_URL=http://10.0.2.2:4000/api` only for Android emulator-specific sessions.

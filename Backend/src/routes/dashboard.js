@@ -1,6 +1,7 @@
 const express = require("express");
 const { supabase } = require("../supabase");
 const { requireUser } = require("../middleware/auth");
+const { toFrequencyDayKeys } = require("../utils/frequencyDays");
 
 const router = express.Router();
 const ONBOARDING_DESCRIPTION_PREFIX = "Created during onboarding.";
@@ -82,29 +83,28 @@ router.get("/", requireUser, async (req, res) => {
   try {
     const userId = req.userId;
 
-    // Get user habits
-    const { data: habits } = await supabase
-      .from("habits")
-      .select("*")
-      .eq("user_id", userId);
-
-    // Get recent logs (this week)
     const now = new Date();
     const sevenDaysAgo = new Date(now);
     sevenDaysAgo.setDate(now.getDate() - 7);
-
-    const { data: recentLogs } = await supabase
-      .from("habit_logs")
-      .select("*")
-      .eq("user_id", userId)
-      .gte("log_date", sevenDaysAgo.toISOString().split("T")[0]);
-
-    // Fetch actual character stats for HP and EXP
-    const { data: character } = await supabase
-      .from("characters")
-      .select("current_hp, max_hp, current_exp")
-      .eq("user_id", req.userId)
-      .single();
+    const [habitsResult, logsResult, characterResult] = await Promise.all([
+      supabase
+        .from("habits")
+        .select("*")
+        .eq("user_id", userId),
+      supabase
+        .from("habit_logs")
+        .select("*")
+        .eq("user_id", userId)
+        .gte("log_date", sevenDaysAgo.toISOString().split("T")[0]),
+      supabase
+        .from("characters")
+        .select("current_hp, max_hp, current_exp")
+        .eq("user_id", req.userId)
+        .single(),
+    ]);
+    const { data: habits } = habitsResult;
+    const { data: recentLogs } = logsResult;
+    const { data: character } = characterResult;
 
     const normalizedHabits = normalizeHabitsForDashboard(habits);
     const weekLogs = recentLogs?.length ?? 0;
@@ -112,12 +112,6 @@ router.get("/", requireUser, async (req, res) => {
     const maxHp = character?.max_hp ?? 100;
     const exp = character?.current_exp ?? 0;
     const streak = weekLogs;
-
-    // Total logs is now just the count of all logs for frontend "todayProgress" ratio.
-    const { count: totalLogs } = await supabase
-      .from("habit_logs")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", userId);
 
     const stats = [
       { label: "HP", value: hp, max: maxHp, color: "#EF4444", icon: "heart" },
@@ -144,6 +138,8 @@ router.get("/", requireUser, async (req, res) => {
       description: habit.target_value
         ? `Target: ${habit.target_value} ${habit.target_unit ?? "times"}`
         : "Daily goal",
+      frequencyType: habit.frequency_type ?? "daily",
+      frequencyDays: toFrequencyDayKeys(habit.frequency_days ?? []),
       color: "#3B82F6",
       tintColor: "#EDF5FF",
       icon:
@@ -166,7 +162,8 @@ router.get("/", requireUser, async (req, res) => {
       actionTone: "primary",
     }));
 
-    const todayProgress = totalLogs > 0 ? Math.min(1, weekLogs / 7) : 0;
+    const todayProgress =
+      normalizedHabits.length > 0 ? Math.min(1, weekLogs / 7) : 0;
 
     return res.json({
       todayProgress,

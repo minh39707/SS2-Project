@@ -1,6 +1,10 @@
 const express = require("express");
 const { supabase } = require("../supabase");
 const { requireUser } = require("../middleware/auth");
+const {
+  ALL_DAY_NUMBERS,
+  toFrequencyDayNumbers,
+} = require("../utils/frequencyDays");
 
 const router = express.Router();
 
@@ -24,6 +28,7 @@ function buildHabitPayload(userId, body) {
     frequency,
     specific_days,
   } = body;
+  const frequencyType = toFrequencyType(frequency);
 
   return {
     user_id: userId,
@@ -31,8 +36,11 @@ function buildHabitPayload(userId, body) {
     description: `${ONBOARDING_DESCRIPTION_PREFIX} Area: ${life_area_label ?? "General"}. Scheduled: ${time_period ?? "morning"} at ${time_exact ?? "07:00"}`,
     habit_type: habit_type === "bad" ? "negative" : "positive",
     tracking_method: "boolean",
-    frequency_type: toFrequencyType(frequency),
-    frequency_days: specific_days ?? [],
+    frequency_type: frequencyType,
+    frequency_days:
+      frequencyType === "weekly"
+        ? toFrequencyDayNumbers(specific_days)
+        : ALL_DAY_NUMBERS,
     hp_reward: 10,
     exp_reward: 20,
     hp_penalty: 15,

@@ -123,3 +123,74 @@ export async function getDashboardData() {
     return buildFallbackDashboard(persistedState?.data ?? null);
   }
 }
+
+export async function createHabit(payload, profileOverride = null) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = profileOverride ?? persistedState?.userProfile ?? null;
+
+  if (!userProfile?.id) {
+    throw new Error("Please sign in before creating a new habit.");
+  }
+
+  return apiRequest("/habits", {
+    method: "POST",
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+    body: payload,
+  });
+}
+
+function getAuthenticatedProfile(persistedState, profileOverride) {
+  const userProfile = profileOverride ?? persistedState?.userProfile ?? null;
+
+  if (!userProfile?.id) {
+    throw new Error("Please sign in before managing habits.");
+  }
+
+  return userProfile;
+}
+
+export async function listHabits(profileOverride = null) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+
+  return apiRequest("/habits", {
+    method: "GET",
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+  });
+}
+
+export async function getHabitById(habitId, profileOverride = null) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+
+  return apiRequest(`/habits/${habitId}`, {
+    method: "GET",
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+  });
+}
+
+export async function updateHabit(habitId, payload, profileOverride = null) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+
+  return apiRequest(`/habits/${habitId}`, {
+    method: "PATCH",
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+    body: payload,
+  });
+}
+
+export async function deleteHabit(habitId, profileOverride = null) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+
+  return apiRequest(`/habits/${habitId}`, {
+    method: "DELETE",
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+  });
+}

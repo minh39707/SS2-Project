@@ -1,25 +1,24 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import { useIsFocused } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
+import EmptyStateCard from "@/src/components/EmptyStateCard";
+import ScreenContainer from "@/src/components/ScreenContainer";
+import SecondaryButton from "@/src/components/SecondaryButton";
 import Card from "@/src/components/ui/Card";
 import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, spacing } from "@/src/constants/theme";
-import EmptyStateCard from "@/src/components/EmptyStateCard";
-import PrimaryButton from "@/src/components/PrimaryButton";
-import ScreenContainer from "@/src/components/ScreenContainer";
-import SecondaryButton from "@/src/components/SecondaryButton";
+import { getDashboardData } from "@/src/services/habit.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
 import {
   formatTimeLabel,
   getFrequencyLabel,
-  getHabitDisplayName,
   getLifeAreaLabel,
 } from "@/src/utils/onboarding";
-import { useEffect, useState } from "react";
-import { getDashboardData } from "@/src/services/habit.service";
+
 const orderedDays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const dayLabels = {
   mon: "Mon",
@@ -30,24 +29,128 @@ const dayLabels = {
   sat: "Sat",
   sun: "Sun",
 };
+
 function getActiveDays(frequency, specificDays) {
-  if (frequency === "specific_days") {
+  if (frequency === "specific_days" || frequency === "weekly") {
     return new Set(specificDays);
   }
+
   if (frequency === "weekdays") {
     return new Set(["mon", "tue", "wed", "thu", "fri"]);
   }
+
   if (frequency === "weekends") {
     return new Set(["sat", "sun"]);
   }
+
+  if (frequency === "monthly") {
+    return new Set();
+  }
+
   return new Set(orderedDays);
 }
+
+function getDashboardFrequencyLabel(frequency, specificDays) {
+  if (frequency === "weekly") {
+    if (!specificDays.length) {
+      return "Weekly";
+    }
+
+    const labels = specificDays
+      .map((day) => dayLabels[day] ?? day)
+      .join(", ");
+
+    return `Weekly: ${labels}`;
+  }
+
+  if (frequency === "monthly") {
+    return "Monthly";
+  }
+
+  if (frequency === "daily") {
+    return "Daily";
+  }
+
+  return null;
+}
+
 function getTodayKey() {
   const day = new Date().getDay();
   return orderedDays[(day + 6) % 7];
 }
+
+function getInitials(name) {
+  return (
+    String(name ?? "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "HH"
+  );
+}
+
+function buildWeekEntries(calendarDays, activeDays, todayKey, streak) {
+  const todayIndex = orderedDays.indexOf(todayKey);
+  const entries = orderedDays.map((day, index) => {
+    const calendarDay = calendarDays?.[index];
+    let state = "inactive";
+
+    if (calendarDay?.status === "done") {
+      state = "done";
+    } else if (day === todayKey) {
+      state = "today";
+    } else if (activeDays.has(day) && index < todayIndex) {
+      state = "missed";
+    } else if (activeDays.has(day)) {
+      state = "planned";
+    }
+
+    return {
+      key: day,
+      label: dayLabels[day][0],
+      fullLabel: dayLabels[day],
+      state,
+    };
+  });
+
+  const streakKeys = new Set();
+  let remainingStreak = Math.max(0, streak);
+
+  for (let index = todayIndex; index >= 0 && remainingStreak > 0; index -= 1) {
+    if (entries[index].state === "done" || entries[index].state === "today") {
+      streakKeys.add(entries[index].key);
+      remainingStreak -= 1;
+      continue;
+    }
+
+    if (entries[index].state === "missed") {
+      break;
+    }
+  }
+
+  return entries.map((entry) => ({
+    ...entry,
+    streak: streakKeys.has(entry.key),
+  }));
+}
+
+function getMissionRoute(router, missionId) {
+  if (missionId === "empty-first-habit" || missionId === "primary") {
+    router.push("/habit-manage");
+    return;
+  }
+
+  router.push({
+    pathname: "/habit-edit",
+    params: { habitId: missionId },
+  });
+}
+
 export default function HomeScreen() {
   const router = useRouter();
+  const isFocused = useIsFocused();
   const {
     authMethod,
     completed,
@@ -58,15 +161,31 @@ export default function HomeScreen() {
   } = useOnboarding();
   const [dashboardData, setDashboardData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedDashboard, setHasLoadedDashboard] = useState(false);
 
   useEffect(() => {
-    // Only fetch if hydrated and the user has completed login
-    if (!hydrated || !completed) return;
+    if (!hydrated) {
+      return;
+    }
+
+    if (!completed) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (!isFocused) {
+      return;
+    }
 
     const fetchDashboard = async () => {
+      if (!hasLoadedDashboard) {
+        setIsLoading(true);
+      }
+
       try {
         const result = await getDashboardData();
         setDashboardData(result);
+        setHasLoadedDashboard(true);
       } catch (error) {
         console.error("Failed to load dashboard", error);
       } finally {
@@ -74,10 +193,10 @@ export default function HomeScreen() {
       }
     };
 
-    fetchDashboard();
-  }, [hydrated, completed]);
+    void fetchDashboard();
+  }, [completed, hasLoadedDashboard, hydrated, isFocused]);
 
-  if (!hydrated || (completed && isLoading)) {
+  if (!hydrated || (completed && isLoading && !dashboardData)) {
     return (
       <View style={styles.loader}>
         <ActivityIndicator color={colors.primary} size="large" />
@@ -98,16 +217,10 @@ export default function HomeScreen() {
     );
   }
 
-  // Determine primary habit from dashboardData if available, fallback to local data if not
-  // (useful for immediate feedback before refresh)
   const primaryAction = dashboardData?.quickActions?.[0];
   const hasAnyHabits = !!primaryAction || data.habit_name;
-
-  const habitLabel = primaryAction
-    ? primaryAction.title
-    : data.habit_name
-      ? getHabitDisplayName(data.habit_name, data.habit_type)
-      : "No Focus";
+  const dashboardFrequencyType = primaryAction?.frequencyType ?? null;
+  const dashboardFrequencyDays = primaryAction?.frequencyDays ?? [];
   const lifeAreaLabel = data.life_area
     ? getLifeAreaLabel(data.life_area)
     : "General";
@@ -116,25 +229,40 @@ export default function HomeScreen() {
   const scheduleLabel = primaryAction
     ? primaryAction.description
     : `${rawTimePeriod[0].toUpperCase()}${rawTimePeriod.slice(1)} at ${formatTimeLabel(rawTimeExact)}`;
-  const frequencyLabel = data.frequency
-    ? getFrequencyLabel(data.frequency, data.specific_days || [])
-    : "everyday";
+  const frequencyLabel =
+    getDashboardFrequencyLabel(dashboardFrequencyType, dashboardFrequencyDays) ??
+    (data.frequency
+      ? getFrequencyLabel(data.frequency, data.specific_days || [])
+      : "Every day");
   const activeDays = getActiveDays(
-    data.frequency || "everyday",
-    data.specific_days || [],
+    dashboardFrequencyType || data.frequency || "everyday",
+    dashboardFrequencyType ? dashboardFrequencyDays : data.specific_days || [],
   );
   const todayKey = getTodayKey();
+  const weekEntries = buildWeekEntries(
+    dashboardData?.calendarDays ?? [],
+    activeDays,
+    todayKey,
+    dashboardData?.stats?.find((item) => item.label === "Streaks")?.value ?? 0,
+  );
 
-  // Stats from dashboard data
-  const hp = dashboardData?.stats?.find((s) => s.label === "HP")?.value ?? 50;
+  const hp = dashboardData?.stats?.find((item) => item.label === "HP")?.value ?? 50;
   const streak =
-    dashboardData?.stats?.find((s) => s.label === "Streaks")?.value ?? 0;
-  const exp = dashboardData?.stats?.find((s) => s.label === "EXP")?.value ?? 0;
-  const level = Math.max(1, Math.floor(exp / 100) + 1); // Default simplified level logic
+    dashboardData?.stats?.find((item) => item.label === "Streaks")?.value ?? 0;
+  const exp = dashboardData?.stats?.find((item) => item.label === "EXP")?.value ?? 0;
+  const level = Math.max(1, Math.floor(exp / 100) + 1);
   const expGoal = level * 100;
-  const expProgress = (exp % 100) / 100;
-
+  const nextLevelRemaining = Math.max(expGoal - exp, 0);
+  const expProgress = expGoal > 0 ? Math.max(0, Math.min(1, exp / expGoal)) : 0;
+  const hpProgress = Math.max(0, Math.min(1, hp / 100));
+  const todayProgressRatio = dashboardData?.todayProgress ?? 0;
+  const trackedMissionCount = Math.max(1, hasAnyHabits ? Math.min(4, (dashboardData?.quickActions?.length ?? 1)) : 1);
+  const completedMissionCount = Math.min(
+    trackedMissionCount,
+    Math.round(todayProgressRatio * trackedMissionCount),
+  );
   const profileName = userProfile?.name ?? "Habit Hero";
+  const profileInitials = getInitials(profileName);
   const providerLabel =
     authMethod === "google"
       ? "Google sync"
@@ -157,7 +285,8 @@ export default function HomeScreen() {
             : "sparkles-outline",
       title: action.title,
       caption: action.description,
-      done: false,
+      reward: action.id === primaryAction?.id ? "+20 EXP" : "+10 EXP",
+      actionLabel: action.id === primaryAction?.id ? "Open mission" : "Open",
     })) ?? [];
 
   if (!hasAnyHabits) {
@@ -165,236 +294,323 @@ export default function HomeScreen() {
       {
         id: "empty-first-habit",
         icon: "add-circle-outline",
-        title: "Add your first habit",
-        caption: 'Tap "Adjust My Habit" below to get started',
-        done: false,
+        title: "Create your first habit",
+        caption: 'Use the "Add Habit" button below to start your streak.',
+        reward: "+20 EXP",
+        actionLabel: "Add habit",
       },
     ];
   }
+
+  const primaryMission = missionItems[0];
+  const habitListItems = missionItems.slice(0, 4);
+
   return (
     <ScreenContainer contentContainerStyle={styles.content}>
-      <Animated.View
-        entering={FadeInDown.duration(420)}
-        style={styles.heroWrap}
-      >
-        <LinearGradient
-          colors={["#307AF3", "#1E5ED8"]}
-          end={{ x: 1, y: 1 }}
-          start={{ x: 0, y: 0 }}
-          style={styles.hero}
-        >
-          <View style={styles.heroTop}>
-            <View>
-              <Text color="white" style={styles.heroEyebrow} variant="label">
-                HabitForge Dashboard
-              </Text>
-              <Text color="white" style={styles.heroName} variant="title">
-                {profileName}
-              </Text>
-              <Text color="white" style={styles.heroSubtext} variant="body">
-                {habitLabel} is your focus today.
-              </Text>
+      <Animated.View entering={FadeInDown.duration(380)} style={styles.sectionBlock}>
+        <Card style={styles.playerCard}>
+          <View style={styles.playerTop}>
+            <View style={styles.avatarWrap}>
+              <View style={styles.avatarCircle}>
+                <Text style={styles.avatarText} variant="subtitle">
+                  {profileInitials}
+                </Text>
+              </View>
+              <View style={styles.levelPill}>
+                <Text color="primary" style={styles.levelPillText} variant="caption">
+                  LV {level}
+                </Text>
+              </View>
             </View>
 
-            <View style={styles.levelBadge}>
-              <Text style={styles.levelText} variant="label">
-                LV {level}
-              </Text>
-            </View>
-          </View>
+            <View style={styles.playerInfo}>
+              <View style={styles.playerHeader}>
+                <View style={styles.playerHeaderCopy}>
+                  <Text style={styles.playerName} variant="subtitle">
+                    {profileName}
+                  </Text>
+                  <Text color="muted" variant="caption">
+                    {providerLabel}
+                  </Text>
+                </View>
 
-          <View style={styles.heroStats}>
-            <View style={styles.heroStatCard}>
-              <Text
-                color="white"
-                style={styles.heroStatLabel}
-                variant="caption"
-              >
-                HP
-              </Text>
-              <Text
-                color="white"
-                style={styles.heroStatValue}
-                variant="subtitle"
-              >
-                {hp}/100
-              </Text>
-            </View>
-            <View style={styles.heroStatCard}>
-              <Text
-                color="white"
-                style={styles.heroStatLabel}
-                variant="caption"
-              >
-                Streaks
-              </Text>
-              <Text
-                color="white"
-                style={styles.heroStatValue}
-                variant="subtitle"
-              >
-                {streak} days
-              </Text>
-            </View>
-          </View>
-        </LinearGradient>
-      </Animated.View>
+                <View style={styles.streakBadge}>
+                  <Text style={styles.streakText} variant="label">
+                    {streak}
+                  </Text>
+                  <Ionicons color="#F59E0B" name="flame" size={14} />
+                </View>
+              </View>
 
-      <Animated.View
-        entering={FadeInDown.duration(470).delay(40)}
-        style={styles.expCardWrap}
-      >
-        <Card style={styles.expCard}>
-          <View style={styles.sectionHeader}>
-            <Text variant="subtitle">EXP Progress</Text>
-            <Text color="muted" variant="body">
-              {exp}/{expGoal}
-            </Text>
+              <View style={styles.statGroup}>
+                <View style={styles.statLabelRow}>
+                  <Text style={styles.statLabel} variant="caption">
+                    HP
+                  </Text>
+                  <Text style={styles.statValue} variant="caption">
+                    {hp}/100
+                  </Text>
+                </View>
+                <View style={styles.statTrack}>
+                  <View
+                    style={[
+                      styles.statFill,
+                      styles.hpFill,
+                      { width: `${Math.max(8, hpProgress * 100)}%` },
+                    ]}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.statGroup}>
+                <View style={styles.statLabelRow}>
+                  <Text style={styles.statLabel} variant="caption">
+                    EXP
+                  </Text>
+                  <Text style={styles.statValue} variant="caption">
+                    {exp}/{expGoal}
+                  </Text>
+                </View>
+                <View style={styles.statTrack}>
+                  <View
+                    style={[
+                      styles.statFill,
+                      styles.expFill,
+                      { width: `${Math.max(8, expProgress * 100)}%` },
+                    ]}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.playerHint}>
+                <Ionicons color={colors.primary} name="flash-outline" size={14} />
+                <Text color="muted" style={styles.playerHintText} variant="caption">
+                  Complete habits to gain EXP. Missing core habits may cost HP.
+                </Text>
+              </View>
+            </View>
           </View>
-          <View style={styles.expTrack}>
-            <View
-              style={[
-                styles.expFill,
-                { width: `${Math.max(12, expProgress * 100)}%` },
-              ]}
-            />
-          </View>
-          <Text color="muted" variant="body">
-            Keep checking in on time to level up faster.
-          </Text>
         </Card>
       </Animated.View>
 
       <Animated.View
-        entering={FadeInDown.duration(520).delay(80)}
-        style={styles.statsGrid}
-      >
-        <Card style={styles.statCard}>
-          <Ionicons color={colors.primary} name="person-outline" size={20} />
-          <Text color="muted" variant="caption">
-            Account
-          </Text>
-          <Text variant="subtitle">{providerLabel}</Text>
-        </Card>
-
-        <Card style={styles.statCard}>
-          <Ionicons color={colors.primary} name="calendar-outline" size={20} />
-          <Text color="muted" variant="caption">
-            Schedule
-          </Text>
-          <Text variant="subtitle">{scheduleLabel}</Text>
-        </Card>
-      </Animated.View>
-
-      <Animated.View
-        entering={FadeInDown.duration(560).delay(110)}
+        entering={FadeInDown.duration(430).delay(30)}
         style={styles.sectionBlock}
       >
         <View style={styles.sectionHeader}>
-          <Text variant="subtitle">Week</Text>
+          <Text variant="subtitle">Week Tracker</Text>
           <Text color="muted" variant="body">
-            Active days
+            {completedMissionCount}/{trackedMissionCount} done today
           </Text>
         </View>
 
-        <View style={styles.weekRow}>
-          {orderedDays.map((day) => {
-            const isToday = day === todayKey;
-            const isActive = activeDays.has(day);
-            return (
+        <Card style={styles.weekCard}>
+          <View style={styles.weekRow}>
+            {weekEntries.map((day) => (
               <View
-                key={day}
+                key={day.key}
                 style={[
-                  styles.dayPill,
-                  isActive && styles.dayPillActive,
-                  isToday && styles.dayPillToday,
+                  styles.weekDay,
+                  day.state === "done" && styles.weekDayDone,
+                  day.state === "missed" && styles.weekDayMissed,
+                  day.state === "today" && styles.weekDayToday,
+                  day.state === "planned" && styles.weekDayPlanned,
                 ]}
               >
+                {day.streak ? (
+                  <View style={styles.flameBadge}>
+                    <Ionicons color="#F59E0B" name="flame" size={10} />
+                  </View>
+                ) : null}
+
+                {day.state === "done" ? (
+                  <Ionicons color="#FFFFFF" name="checkmark" size={14} />
+                ) : day.state === "missed" ? (
+                  <Ionicons color="#E85D75" name="close" size={14} />
+                ) : day.state === "today" ? (
+                  <View style={styles.todayDot} />
+                ) : null}
+
                 <Text
                   style={[
-                    styles.dayLabel,
-                    isActive && styles.dayLabelActive,
-                    isToday && styles.dayLabelToday,
+                    styles.weekDayLabel,
+                    day.state === "done" && styles.weekDayLabelDone,
+                    day.state === "today" && styles.weekDayLabelToday,
                   ]}
                   variant="caption"
                 >
-                  {dayLabels[day]}
+                  {day.label}
                 </Text>
               </View>
-            );
-          })}
-        </View>
+            ))}
+          </View>
+
+          <Text color="muted" variant="caption">
+            Check marks show completed days, red marks show missed active days, and the flame highlights your current streak.
+          </Text>
+        </Card>
       </Animated.View>
 
       <Animated.View
-        entering={FadeInDown.duration(600).delay(140)}
+        entering={FadeInDown.duration(470).delay(60)}
         style={styles.sectionBlock}
       >
         <View style={styles.sectionHeader}>
-          <Text variant="subtitle">Mission Board</Text>
+          <Text variant="subtitle">Your Habits</Text>
           <Text color="muted" variant="body">
-            3 quests today
+            Quick access for today
           </Text>
         </View>
 
-        <View style={styles.missionList}>
-          {missionItems.map((mission, index) => (
-            <Card
-              key={mission.id ?? `${mission.title}-${index}`}
-              style={styles.missionCard}
-            >
-              <View
-                style={[
-                  styles.missionIcon,
-                  mission.done && styles.missionIconDone,
+        {habitListItems.length > 0 ? (
+          <View style={styles.questList}>
+            {habitListItems.map((mission) => (
+              <Pressable
+                key={mission.id}
+                onPress={() => getMissionRoute(router, mission.id)}
+                style={({ pressed }) => [
+                  styles.questPressable,
+                  pressed && styles.questPressablePressed,
                 ]}
               >
-                <Ionicons
-                  color={mission.done ? "#0F9F6E" : colors.primary}
-                  name={mission.icon}
-                  size={18}
-                />
-              </View>
-              <View style={styles.missionCopy}>
-                <Text variant="subtitle">{mission.title}</Text>
-                <Text color="muted" variant="body">
-                  {mission.caption}
-                </Text>
-              </View>
-            </Card>
-          ))}
-        </View>
+                <Card style={styles.questCard}>
+                  <View style={styles.questIconWrap}>
+                    <Ionicons
+                      color={colors.primary}
+                      name={mission.icon}
+                      size={18}
+                    />
+                  </View>
+                  <View style={styles.questCopy}>
+                    <Text variant="subtitle">{mission.title}</Text>
+                    <Text color="muted" variant="body">
+                      {mission.caption}
+                    </Text>
+                  </View>
+                  <View style={styles.questReward}>
+                    <Text color="primary" variant="caption">
+                      {mission.reward}
+                    </Text>
+                  </View>
+                </Card>
+              </Pressable>
+            ))}
+          </View>
+        ) : (
+          <Card style={styles.emptyQuestCard}>
+            <Ionicons color={colors.primary} name="sparkles-outline" size={18} />
+            <Text variant="body">Add more habits to build a fuller mission board.</Text>
+          </Card>
+        )}
       </Animated.View>
 
       <Animated.View
-        entering={FadeInDown.duration(640).delay(170)}
+        entering={FadeInDown.duration(510).delay(90)}
+        style={styles.rewardRow}
+      >
+        <Card style={styles.rewardCard}>
+          <View style={styles.rewardIconWrap}>
+            <Ionicons color={colors.warning} name="gift-outline" size={18} />
+          </View>
+          <View style={styles.rewardCopy}>
+            <Text color="muted" variant="caption">
+              Daily Reward
+            </Text>
+            <Text variant="subtitle">Finish 1 mission for +20 EXP</Text>
+          </View>
+        </Card>
+
+        <Card style={styles.rewardCard}>
+          <View style={styles.rewardIconWrap}>
+            <Ionicons color={colors.primary} name="trending-up-outline" size={18} />
+          </View>
+          <View style={styles.rewardCopy}>
+            <Text color="muted" variant="caption">
+              Next Level
+            </Text>
+            <Text variant="subtitle">{nextLevelRemaining} EXP remaining</Text>
+          </View>
+        </Card>
+      </Animated.View>
+
+      <Animated.View
+        entering={FadeInDown.duration(550).delay(120)}
         style={styles.sectionBlock}
       >
-        <Card style={styles.focusCard}>
-          <View style={styles.sectionHeader}>
-            <Text variant="subtitle">Today&apos;s Focus</Text>
-            <Text color="primary" variant="label">
-              {lifeAreaLabel}
-            </Text>
+        <Card style={styles.todayMissionCard}>
+          <View style={styles.todayMissionHeader}>
+            <View>
+              <Text color="primary" variant="label">
+                Today&apos;s Mission
+              </Text>
+              <Text style={styles.todayMissionTitle} variant="title">
+                {primaryMission?.title ?? "Create your first habit"}
+              </Text>
+            </View>
+            <View style={styles.rewardBadge}>
+              <Ionicons color={colors.warning} name="flash" size={14} />
+              <Text style={styles.rewardBadgeText} variant="caption">
+                {primaryMission?.reward ?? "+20 EXP"}
+              </Text>
+            </View>
           </View>
 
-          <Text style={styles.focusHabit} variant="title">
-            {habitLabel}
+          <Text color="muted" style={styles.todayMissionBody} variant="body">
+            {hasAnyHabits
+              ? `${scheduleLabel}. ${frequencyLabel}. Keep ${lifeAreaLabel} moving forward.`
+              : "Start with one real-world habit like drinking water, walking after lunch, or reading 15 pages."}
           </Text>
-          <Text color="muted" variant="body">
-            {scheduleLabel}
-          </Text>
-          <Text color="muted" variant="body">
-            {frequencyLabel}
-          </Text>
+
+          <View style={styles.missionInfoRow}>
+            <View style={styles.missionInfoChip}>
+              <Ionicons color="#64748B" name="time-outline" size={14} />
+              <Text color="muted" variant="caption">
+                {scheduleLabel}
+              </Text>
+            </View>
+
+            <View style={styles.missionInfoChip}>
+              <Ionicons color="#64748B" name="pulse-outline" size={14} />
+              <Text color="muted" variant="caption">
+                {frequencyLabel}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.ctaRow}>
+            <Pressable
+              onPress={() =>
+                primaryMission
+                  ? getMissionRoute(router, primaryMission.id)
+                  : router.push("/habit-create")
+              }
+              style={({ pressed }) => [
+                styles.primaryCta,
+                pressed && styles.primaryCtaPressed,
+              ]}
+            >
+              <Ionicons color={colors.surface} name="checkmark-circle" size={18} />
+              <Text color="white" style={styles.primaryCtaText} variant="label">
+                {primaryMission?.actionLabel ?? "Open mission"}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/habit-create")}
+              style={({ pressed }) => [
+                styles.secondaryCta,
+                pressed && styles.secondaryCtaPressed,
+              ]}
+            >
+              <Ionicons color={colors.primary} name="add-circle-outline" size={18} />
+              <Text color="primary" style={styles.secondaryCtaText} variant="label">
+                Add Habit
+              </Text>
+            </Pressable>
+          </View>
         </Card>
       </Animated.View>
 
       <View style={styles.actions}>
-        <PrimaryButton
-          label="Adjust My Habit"
-          onPress={() => router.replace("/schedule")}
-        />
         <SecondaryButton
           label="Start over"
           onPress={() => {
@@ -406,6 +622,7 @@ export default function HomeScreen() {
     </ScreenContainer>
   );
 }
+
 const styles = StyleSheet.create({
   loader: {
     flex: 1,
@@ -418,96 +635,228 @@ const styles = StyleSheet.create({
   },
   content: {
     gap: spacing.lg,
-    paddingBottom: spacing.xxl + spacing.md,
-  },
-  heroWrap: {
-    marginTop: spacing.xs,
-  },
-  hero: {
-    borderRadius: 28,
-    padding: spacing.xl,
-    gap: spacing.lg,
-  },
-  heroTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing.md,
-  },
-  heroEyebrow: {
-    opacity: 0.8,
-    marginBottom: 6,
-  },
-  heroName: {
-    fontSize: 30,
-    lineHeight: 36,
-    marginBottom: 6,
-  },
-  heroSubtext: {
-    opacity: 0.92,
-    maxWidth: 220,
-  },
-  levelBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(255,255,255,0.16)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.22)",
-  },
-  levelText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-  },
-  heroStats: {
-    flexDirection: "row",
-    gap: spacing.sm,
-  },
-  heroStatCard: {
-    flex: 1,
-    borderRadius: 22,
-    padding: spacing.md,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.16)",
-  },
-  heroStatLabel: {
-    opacity: 0.8,
-    marginBottom: 8,
-  },
-  heroStatValue: {
-    fontSize: 20,
-    lineHeight: 24,
-  },
-  expCardWrap: {
-    marginTop: -4,
-  },
-  expCard: {
-    padding: spacing.lg,
-    gap: spacing.sm,
-  },
-  expTrack: {
-    height: 12,
-    borderRadius: radii.pill,
-    backgroundColor: "#E7EFFB",
-    overflow: "hidden",
-  },
-  expFill: {
-    height: "100%",
-    borderRadius: radii.pill,
-    backgroundColor: colors.primary,
-  },
-  statsGrid: {
-    flexDirection: "row",
-    gap: spacing.sm,
-  },
-  statCard: {
-    flex: 1,
-    padding: spacing.md,
-    gap: spacing.xs,
+    paddingBottom: spacing.xxl * 2,
   },
   sectionBlock: {
     gap: spacing.sm,
+  },
+  playerCard: {
+    padding: spacing.md,
+    gap: spacing.md,
+    backgroundColor: "#EEF5FF",
+    borderWidth: 1,
+    borderColor: "#D7E5FB",
+    borderRadius: 24,
+  },
+  playerTop: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    alignItems: "center",
+  },
+  avatarWrap: {
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  avatarCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#D9E8FF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: {
+    color: colors.primary,
+    fontSize: 22,
+  },
+  levelPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radii.pill,
+    backgroundColor: "#FFFFFF",
+  },
+  levelPillText: {
+    fontWeight: "700",
+  },
+  playerInfo: {
+    flex: 1,
+    gap: 8,
+  },
+  playerHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+    alignItems: "center",
+  },
+  playerHeaderCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  playerName: {
+    fontSize: 18,
+    lineHeight: 22,
+  },
+  streakBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#FFE29A",
+    borderRadius: radii.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  streakText: {
+    color: "#8A5400",
+    fontWeight: "700",
+  },
+  statGroup: {
+    gap: 3,
+  },
+  statLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  statLabel: {
+    color: "#475569",
+    fontWeight: "700",
+  },
+  statValue: {
+    color: "#0F172A",
+    fontWeight: "700",
+  },
+  statTrack: {
+    height: 8,
+    borderRadius: radii.pill,
+    backgroundColor: "#DCE7F8",
+    overflow: "hidden",
+  },
+  statFill: {
+    height: "100%",
+    borderRadius: radii.pill,
+  },
+  hpFill: {
+    backgroundColor: "#EF5B64",
+  },
+  expFill: {
+    backgroundColor: "#467EE8",
+  },
+  playerHint: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.xs,
+  },
+  playerHintText: {
+    flex: 1,
+    lineHeight: 17,
+  },
+  rewardRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  rewardCard: {
+    flex: 1,
+    padding: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  rewardIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#F8FAFD",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rewardCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  todayMissionCard: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    borderRadius: 28,
+  },
+  todayMissionHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  todayMissionTitle: {
+    marginTop: 4,
+    fontSize: 28,
+    lineHeight: 34,
+  },
+  rewardBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: radii.pill,
+    backgroundColor: "#FFF4DE",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  rewardBadgeText: {
+    color: "#A16207",
+    fontWeight: "700",
+  },
+  todayMissionBody: {
+    lineHeight: 22,
+  },
+  missionInfoRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  missionInfoChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F8FAFD",
+    borderRadius: radii.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  ctaRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  primaryCta: {
+    flex: 1,
+    minHeight: 54,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+  },
+  primaryCtaPressed: {
+    opacity: 0.92,
+  },
+  primaryCtaText: {
+    fontWeight: "700",
+  },
+  secondaryCta: {
+    minWidth: 120,
+    minHeight: 54,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#D6E2F6",
+    backgroundColor: "#F8FBFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  secondaryCtaPressed: {
+    opacity: 0.85,
+  },
+  secondaryCtaText: {
+    fontWeight: "700",
   },
   sectionHeader: {
     flexDirection: "row",
@@ -515,50 +864,87 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.sm,
   },
+  weekCard: {
+    padding: spacing.md,
+    gap: spacing.md,
+  },
   weekRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 6,
+    gap: 8,
   },
-  dayPill: {
+  weekDay: {
     flex: 1,
-    minHeight: 52,
-    borderRadius: 18,
-    backgroundColor: "#F1F5FB",
+    minHeight: 58,
+    borderRadius: 20,
+    backgroundColor: "#F8FAFD",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#E3EAF5",
+    gap: 4,
+    position: "relative",
   },
-  dayPillActive: {
-    backgroundColor: "#E8F1FF",
-    borderColor: "#BFD6FF",
+  weekDayDone: {
+    backgroundColor: "#3B82F6",
+    borderColor: "#3B82F6",
   },
-  dayPillToday: {
-    backgroundColor: colors.primary,
+  weekDayMissed: {
+    backgroundColor: "#FFF1F2",
+    borderColor: "#FBCBD3",
+  },
+  weekDayToday: {
+    backgroundColor: "#FFFFFF",
     borderColor: colors.primary,
+    borderWidth: 2,
   },
-  dayLabel: {
-    color: "#74839D",
+  weekDayPlanned: {
+    backgroundColor: "#EDF4FF",
+    borderColor: "#CFE0FF",
   },
-  dayLabelActive: {
-    color: colors.primary,
+  weekDayLabel: {
+    color: "#64748B",
     fontWeight: "700",
   },
-  dayLabelToday: {
+  weekDayLabelDone: {
     color: "#FFFFFF",
-    fontWeight: "700",
   },
-  missionList: {
+  weekDayLabelToday: {
+    color: colors.primary,
+  },
+  flameBadge: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#FFF4DE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  todayDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.primary,
+  },
+  questList: {
     gap: spacing.sm,
   },
-  missionCard: {
+  questPressable: {
+    borderRadius: radii.xl,
+  },
+  questPressablePressed: {
+    opacity: 0.86,
+  },
+  questCard: {
     padding: spacing.md,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
   },
-  missionIcon: {
+  questIconWrap: {
     width: 42,
     height: 42,
     borderRadius: 21,
@@ -566,23 +952,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  missionIconDone: {
-    backgroundColor: "#EAF9F2",
-  },
-  missionCopy: {
+  questCopy: {
     flex: 1,
     gap: 2,
   },
-  focusCard: {
-    padding: spacing.lg,
-    gap: spacing.sm,
+  questReward: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: radii.pill,
+    backgroundColor: "#F8FBFF",
+    borderWidth: 1,
+    borderColor: "#D6E2F6",
   },
-  focusHabit: {
-    fontSize: 28,
-    lineHeight: 34,
+  emptyQuestCard: {
+    padding: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
   },
   actions: {
-    gap: spacing.sm,
     marginTop: spacing.sm,
   },
 });

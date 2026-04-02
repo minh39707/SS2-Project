@@ -2,6 +2,11 @@ import Constants from "expo-constants";
 import { Platform } from "react-native";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
+const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+const configuredApiHost = process.env.EXPO_PUBLIC_API_HOST?.trim();
+const configuredApiPort = process.env.EXPO_PUBLIC_API_PORT?.trim() || "4000";
+const configuredApiScheme =
+  process.env.EXPO_PUBLIC_API_SCHEME?.trim() || "http";
 
 export async function simulateRequest(payload, delay = 180) {
   await new Promise((resolve) => setTimeout(resolve, delay));
@@ -19,24 +24,42 @@ export class ApiError extends Error {
 function getExpoHost() {
   const expoConfig = Constants.expoConfig;
   const hostUri = expoConfig?.hostUri;
+  const debuggerHost =
+    expoConfig?.extra?.expoGo?.debuggerHost ??
+    Constants.expoGoConfig?.debuggerHost ??
+    Constants.manifest2?.extra?.expoGo?.debuggerHost ??
+    Constants.manifest?.debuggerHost;
+  const candidate = hostUri ?? debuggerHost;
 
-  if (!hostUri) {
+  if (!candidate) {
     return null;
   }
 
-  return hostUri.split(":")[0] ?? null;
+  return candidate.split(":")[0] ?? null;
+}
+
+function buildApiBaseUrl(host) {
+  return `${configuredApiScheme}://${host}:${configuredApiPort}/api`;
 }
 
 export function getApiBaseUrl() {
+  if (configuredApiUrl) {
+    return configuredApiUrl.replace(/\/+$/, "");
+  }
+
+  if (configuredApiHost) {
+    return buildApiBaseUrl(configuredApiHost);
+  }
+
   const expoHost = getExpoHost();
 
   if (expoHost) {
-    return `http://${expoHost}:4000/api`;
+    return buildApiBaseUrl(expoHost);
   }
 
   return Platform.OS === "android"
-    ? "http://10.0.2.2:4000/api"
-    : "http://localhost:4000/api";
+    ? buildApiBaseUrl("10.0.2.2")
+    : buildApiBaseUrl("localhost");
 }
 
 function buildHeaders(headers, hasBody, userId, authToken) {
@@ -75,6 +98,7 @@ function parseResponseBody(raw) {
 
 export async function apiRequest(path, options = {}) {
   const {
+    apiBaseUrl,
     body,
     headers,
     userId,
@@ -83,7 +107,10 @@ export async function apiRequest(path, options = {}) {
     ...requestInit
   } = options;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const url = `${getApiBaseUrl()}${normalizedPath}`;
+  const resolvedBaseUrl = apiBaseUrl
+    ? apiBaseUrl.replace(/\/+$/, "")
+    : getApiBaseUrl();
+  const url = `${resolvedBaseUrl}${normalizedPath}`;
 
   let response;
   const controller = new AbortController();
@@ -104,7 +131,7 @@ export async function apiRequest(path, options = {}) {
     }
 
     throw new Error(
-      `Unable to reach backend at ${getApiBaseUrl()}. Set EXPO_PUBLIC_API_URL if needed.`,
+      `Unable to reach backend at ${resolvedBaseUrl}. Set EXPO_PUBLIC_API_URL if needed.`,
     );
   } finally {
     clearTimeout(timeoutId);
