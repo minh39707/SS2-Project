@@ -2,9 +2,11 @@ import { colors } from "@/src/constants/colors";
 import { apiRequest } from "@/src/services/api";
 import { loadOnboardingState } from "@/src/services/onboardingStorage";
 
-function buildFallbackProfile(name, completed) {
+function buildFallbackProfile(name, completed, avatarUrl = null) {
   return {
+    id: null,
     name: name ?? "Guest User",
+    avatarUrl,
     level: completed ? 1 : 0,
     levelProgress: completed ? 20 : 0,
   };
@@ -41,7 +43,11 @@ export async function getCurrentUser() {
   const userProfile = persistedState?.userProfile ?? null;
 
   if (!userProfile?.id) {
-    return buildFallbackProfile(userProfile?.name, persistedState?.completed);
+    return buildFallbackProfile(
+      userProfile?.name,
+      persistedState?.completed,
+      userProfile?.avatarUrl ?? null,
+    );
   }
 
   try {
@@ -55,8 +61,50 @@ export async function getCurrentUser() {
       console.warn("Falling back to local profile data.", error);
     }
 
-    return buildFallbackProfile(userProfile.name, persistedState?.completed);
+    return buildFallbackProfile(
+      userProfile.name,
+      persistedState?.completed,
+      userProfile?.avatarUrl ?? null,
+    );
   }
+}
+
+export async function updateCurrentUserAvatar(avatarUrl) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = persistedState?.userProfile ?? null;
+
+  if (!userProfile?.id) {
+    throw new Error("Please sign in before changing your avatar.");
+  }
+
+  return apiRequest("/users/me", {
+    method: "PATCH",
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+    body: {
+      avatarUrl,
+    },
+  });
+}
+
+export async function uploadCurrentUserAvatar({ contentType, imageBase64 }) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = persistedState?.userProfile ?? null;
+
+  if (!userProfile?.id) {
+    throw new Error("Please sign in before uploading an avatar.");
+  }
+
+  return apiRequest("/users/me/avatar-upload", {
+    method: "POST",
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+    timeoutMs: 30000,
+    body: {
+      contentType,
+      imageBase64,
+    },
+  });
 }
 
 export async function getUserStats() {

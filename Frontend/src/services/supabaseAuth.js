@@ -40,19 +40,29 @@ function getApiBaseUrlFromRedirect(redirectUrl) {
   }
 }
 
-function buildProfile(user, session, fallbackName) {
+function buildProfile(user, session, fallbackProfile = {}) {
   const authMethod =
     user?.app_metadata?.provider ?? user?.identities?.[0]?.provider ?? "oauth";
+  const providerAvatarUrl =
+    user.user_metadata?.avatar_url ??
+    user.user_metadata?.picture ??
+    user.user_metadata?.photo_url ??
+    null;
 
   return {
     id: user.id,
     email: user.email ?? null,
     name:
-      fallbackName ??
+      fallbackProfile.name ??
       user.user_metadata?.name ??
       user.user_metadata?.full_name ??
       user.email?.split("@")[0] ??
       "Player",
+    avatarUrl:
+      fallbackProfile.avatarUrl ??
+      providerAvatarUrl ??
+      null,
+    providerAvatarUrl,
     accessToken: session.access_token,
     refreshToken: session.refresh_token,
     authMethod,
@@ -134,7 +144,10 @@ async function syncOAuthProfile(provider, apiBaseUrlOverride = null) {
     },
   });
 
-  return buildProfile(session.user, session, response?.user?.name);
+  return buildProfile(session.user, session, {
+    name: response?.user?.name,
+    avatarUrl: response?.user?.avatarUrl,
+  });
 }
 
 export function getOAuthRedirectUrl() {

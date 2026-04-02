@@ -3,6 +3,15 @@ const { supabase } = require("../supabase");
 
 const router = express.Router();
 
+function getProviderAvatarUrl(userMetadata = {}) {
+  return (
+    userMetadata.avatar_url ||
+    userMetadata.picture ||
+    userMetadata.photo_url ||
+    null
+  );
+}
+
 function slugifyUsername(value) {
   return (value ?? "")
     .normalize("NFKD")
@@ -93,6 +102,7 @@ router.post("/email/sign-up", async (req, res) => {
         id: data.user.id,
         email: data.user.email,
         name: displayName,
+        avatarUrl: null,
       },
     });
   } catch (err) {
@@ -124,7 +134,7 @@ router.post("/email/sign-in", async (req, res) => {
     // Fetch user details for frontend payload
     const { data: profile } = await supabase
       .from("users")
-      .select("username")
+      .select("username, avatar_url")
       .eq("user_id", data.user.id)
       .single();
 
@@ -133,6 +143,7 @@ router.post("/email/sign-in", async (req, res) => {
         id: data.user.id,
         email: data.user.email,
         name: profile?.username ?? email.split("@")[0],
+        avatarUrl: profile?.avatar_url ?? null,
       },
       token: data.session.access_token,
       refresh_token: data.session.refresh_token,
@@ -153,6 +164,7 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
     const userId = req.userId;
     const userEmail = req.user?.email;
     const userMetadata = req.user?.user_metadata || {};
+    const providerAvatarUrl = getProviderAvatarUrl(userMetadata);
     const displayName =
       userMetadata.name ||
       userMetadata.full_name ||
@@ -174,7 +186,7 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
     const { data: existingByUserId, error: existingByUserIdError } =
       await supabase
         .from("users")
-        .select("user_id, email, username")
+        .select("user_id, email, username, avatar_url")
         .eq("user_id", userId)
         .maybeSingle();
 
@@ -192,6 +204,7 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
         .update({
           email: userEmail,
           username: preferredUsername,
+          avatar_url: existingByUserId.avatar_url || providerAvatarUrl,
         })
         .eq("user_id", userId)
         .select()
@@ -230,6 +243,7 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
           user_id: userId,
           email: userEmail,
           username: preferredUsername,
+          avatar_url: providerAvatarUrl,
         })
         .select()
         .single();
@@ -282,7 +296,8 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
       user: {
         id: userId,
         email: userEmail,
-        name: displayName,
+        name: profile?.username ?? displayName,
+        avatarUrl: profile?.avatar_url ?? null,
       },
     });
   } catch (err) {

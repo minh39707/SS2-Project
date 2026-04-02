@@ -8,6 +8,7 @@ import EmptyStateCard from "@/src/components/EmptyStateCard";
 import ScreenContainer from "@/src/components/ScreenContainer";
 import SecondaryButton from "@/src/components/SecondaryButton";
 import Card from "@/src/components/ui/Card";
+import ProfileAvatar from "@/src/components/ui/ProfileAvatar";
 import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, spacing } from "@/src/constants/theme";
@@ -77,18 +78,6 @@ function getDashboardFrequencyLabel(frequency, specificDays) {
 function getTodayKey() {
   const day = new Date().getDay();
   return orderedDays[(day + 6) % 7];
-}
-
-function getInitials(name) {
-  return (
-    String(name ?? "")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() ?? "")
-      .join("") || "HH"
-  );
 }
 
 function buildWeekEntries(calendarDays, activeDays, todayKey, streak) {
@@ -262,7 +251,7 @@ export default function HomeScreen() {
     Math.round(todayProgressRatio * trackedMissionCount),
   );
   const profileName = userProfile?.name ?? "Habit Hero";
-  const profileInitials = getInitials(profileName);
+  const profileAvatarUrl = userProfile?.avatarUrl ?? null;
   const providerLabel =
     authMethod === "google"
       ? "Google sync"
@@ -311,11 +300,14 @@ export default function HomeScreen() {
         <Card style={styles.playerCard}>
           <View style={styles.playerTop}>
             <View style={styles.avatarWrap}>
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText} variant="subtitle">
-                  {profileInitials}
-                </Text>
-              </View>
+              <ProfileAvatar
+                avatarUrl={profileAvatarUrl}
+                name={profileName}
+                seed={userProfile?.id ?? profileName}
+                size={60}
+                style={styles.avatarCircle}
+                textStyle={styles.avatarText}
+              />
               <View style={styles.levelPill}>
                 <Text color="primary" style={styles.levelPillText} variant="caption">
                   LV {level}

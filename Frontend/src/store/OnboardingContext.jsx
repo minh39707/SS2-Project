@@ -1,4 +1,11 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { INITIAL_ONBOARDING_DATA } from "@/src/constants/onboarding";
 import {
   completeOAuthRedirect,
@@ -116,9 +123,9 @@ export function OnboardingProvider({ children }) {
       storageScope,
     );
   }, [hydrated, persistedState, storageScope]);
-  const updateData = (updater) => {
+  const updateData = useCallback((updater) => {
     setPersistedState((current) => updater(current));
-  };
+  }, []);
   const setLifeArea = (option) => {
     setSaveError(null);
     updateData((current) => ({
@@ -196,6 +203,17 @@ export function OnboardingProvider({ children }) {
   const clearSaveError = () => {
     setSaveError(null);
   };
+  const updateUserProfile = useCallback((profileUpdates) => {
+    updateData((current) => ({
+      ...current,
+      userProfile: current.userProfile
+        ? {
+            ...current.userProfile,
+            ...profileUpdates,
+          }
+        : profileUpdates,
+    }));
+  }, [updateData]);
   const completeGettingStarted = () => {
     setSaveError(null);
     updateData((current) => ({
@@ -354,6 +372,7 @@ export function OnboardingProvider({ children }) {
     isSaving,
     saveError,
     hasCustomTime: persistedState.hasCustomTime,
+    updateUserProfile,
     setLifeArea,
     setHabitSelection,
     setTimePeriod,

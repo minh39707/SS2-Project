@@ -2,6 +2,7 @@ import Constants from "expo-constants";
 import { Platform } from "react-native";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
+const FALLBACK_REQUEST_TIMEOUT_MS = 4000;
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 const configuredApiHost = process.env.EXPO_PUBLIC_API_HOST?.trim();
 const configuredApiPort = process.env.EXPO_PUBLIC_API_PORT?.trim() || "4000";
@@ -18,6 +19,15 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
     this.data = data;
+  }
+}
+
+class ApiConnectivityError extends Error {
+  constructor(message, cause, baseUrl) {
+    super(message);
+    this.name = "ApiConnectivityError";
+    this.cause = cause;
+    this.baseUrl = baseUrl;
   }
 }
 
@@ -42,24 +52,36 @@ function buildApiBaseUrl(host) {
   return `${configuredApiScheme}://${host}:${configuredApiPort}/api`;
 }
 
-export function getApiBaseUrl() {
-  if (configuredApiUrl) {
-    return configuredApiUrl.replace(/\/+$/, "");
+function dedupeBaseUrls(baseUrls) {
+  return [...new Set(baseUrls.filter(Boolean))];
+}
+
+function getFallbackApiBaseUrl() {
+  return Platform.OS === "android"
+    ? buildApiBaseUrl("10.0.2.2")
+    : buildApiBaseUrl("localhost");
+}
+
+function getApiBaseUrls(apiBaseUrl) {
+  if (apiBaseUrl) {
+    return dedupeBaseUrls([apiBaseUrl.replace(/\/+$/, "")]);
   }
 
-  if (configuredApiHost) {
-    return buildApiBaseUrl(configuredApiHost);
+  if (configuredApiUrl) {
+    return dedupeBaseUrls([configuredApiUrl.replace(/\/+$/, "")]);
   }
 
   const expoHost = getExpoHost();
 
-  if (expoHost) {
-    return buildApiBaseUrl(expoHost);
-  }
+  return dedupeBaseUrls([
+    configuredApiHost ? buildApiBaseUrl(configuredApiHost) : null,
+    expoHost ? buildApiBaseUrl(expoHost) : null,
+    getFallbackApiBaseUrl(),
+  ]);
+}
 
-  return Platform.OS === "android"
-    ? buildApiBaseUrl("10.0.2.2")
-    : buildApiBaseUrl("localhost");
+export function getApiBaseUrl() {
+  return getApiBaseUrls()[0] ?? getFallbackApiBaseUrl();
 }
 
 function buildHeaders(headers, hasBody, userId, authToken) {
@@ -96,25 +118,23 @@ function parseResponseBody(raw) {
   }
 }
 
-export async function apiRequest(path, options = {}) {
-  const {
-    apiBaseUrl,
+async function performRequest(
+  baseUrl,
+  normalizedPath,
+  {
     body,
     headers,
     userId,
     authToken,
-    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    timeoutMs,
     ...requestInit
-  } = options;
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const resolvedBaseUrl = apiBaseUrl
-    ? apiBaseUrl.replace(/\/+$/, "")
-    : getApiBaseUrl();
-  const url = `${resolvedBaseUrl}${normalizedPath}`;
-
-  let response;
+  },
+) {
+  const url = `${baseUrl}${normalizedPath}`;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response;
 
   try {
     response = await fetch(url, {
@@ -125,13 +145,17 @@ export async function apiRequest(path, options = {}) {
     });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(
+      throw new ApiConnectivityError(
         `Request to ${normalizedPath} timed out after ${timeoutMs}ms.`,
+        error,
+        baseUrl,
       );
     }
 
-    throw new Error(
-      `Unable to reach backend at ${resolvedBaseUrl}. Set EXPO_PUBLIC_API_URL if needed.`,
+    throw new ApiConnectivityError(
+      `Unable to reach backend at ${baseUrl}. Set EXPO_PUBLIC_API_URL if needed.`,
+      error,
+      baseUrl,
     );
   } finally {
     clearTimeout(timeoutId);
@@ -153,4 +177,54 @@ export async function apiRequest(path, options = {}) {
   }
 
   return parsedBody;
+}
+
+export async function apiRequest(path, options = {}) {
+  const {
+    apiBaseUrl,
+    body,
+    headers,
+    userId,
+    authToken,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    ...requestInit
+  } = options;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const method = (requestInit.method ?? "GET").toUpperCase();
+  const baseUrls = getApiBaseUrls(apiBaseUrl);
+  const shouldRetryWithFallback =
+    !apiBaseUrl && !configuredApiUrl && (method === "GET" || method === "HEAD");
+
+  let lastError = null;
+
+  for (let index = 0; index < baseUrls.length; index += 1) {
+    const baseUrl = baseUrls[index];
+    const attemptTimeoutMs =
+      index === 0 || !shouldRetryWithFallback
+        ? timeoutMs
+        : Math.min(timeoutMs, FALLBACK_REQUEST_TIMEOUT_MS);
+
+    try {
+      return await performRequest(baseUrl, normalizedPath, {
+        ...requestInit,
+        body,
+        headers,
+        userId,
+        authToken,
+        timeoutMs: attemptTimeoutMs,
+      });
+    } catch (error) {
+      if (!(error instanceof ApiConnectivityError)) {
+        throw error;
+      }
+
+      lastError = error;
+
+      if (!shouldRetryWithFallback || index === baseUrls.length - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError ?? new Error("Unable to complete API request.");
 }

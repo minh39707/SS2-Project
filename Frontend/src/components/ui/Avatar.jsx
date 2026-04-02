@@ -1,68 +1,76 @@
-﻿import { StyleSheet, View } from 'react-native';
-import { Text } from '@/src/components/ui/Text';
-import { colors } from '@/src/constants/colors';
-import { radii } from '@/src/constants/theme';
-export default function Avatar({ name, level, progress }) {
-    const safeProgress = Math.max(0, Math.min(progress ?? 0, 1));
-    const initials = name
-        .split(' ')
-        .map((part) => part[0])
-        .join('')
-        .slice(0, 2)
-        .toUpperCase();
-    return (<View style={styles.wrap}>
+import { StyleSheet, View } from "react-native";
+import ProfileAvatar from "@/src/components/ui/ProfileAvatar";
+import { Text } from "@/src/components/ui/Text";
+import { colors } from "@/src/constants/colors";
+import { radii } from "@/src/constants/theme";
+
+export default function Avatar({ name, level, progress, avatarUrl, seed }) {
+  const safeProgress = Math.max(0, Math.min(progress ?? 0, 1));
+
+  return (
+    <View style={styles.wrap}>
       <View style={styles.ring}>
-        <View style={[styles.ringProgress, { transform: [{ rotate: `${safeProgress * 360}deg` }] }]}/>
-        <View style={styles.avatar}>
-          <Text variant="subtitle" color="primary">
-            {initials}
-          </Text>
-        </View>
+        <View
+          style={[
+            styles.ringProgress,
+            { transform: [{ rotate: `${safeProgress * 360}deg` }] },
+          ]}
+        />
+        <ProfileAvatar
+          avatarUrl={avatarUrl}
+          name={name}
+          seed={seed ?? name}
+          size={58}
+          style={styles.avatar}
+          textStyle={styles.initials}
+        />
       </View>
       <View style={styles.badge}>
-        <Text variant="caption" color="white">
+        <Text color="white" variant="caption">
           Lv {level}
         </Text>
       </View>
-    </View>);
+    </View>
+  );
 }
-const styles = StyleSheet.create({
-    wrap: {
-        alignItems: 'center',
-        gap: 6,
-    },
-    ring: {
-        width: 76,
-        height: 76,
-        borderRadius: radii.pill,
-        backgroundColor: colors.primarySoft,
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-    },
-    ringProgress: {
-        position: 'absolute',
-        width: 76,
-        height: 76,
-        borderRadius: radii.pill,
-        borderWidth: 6,
-        borderColor: colors.primary,
-        borderLeftColor: 'transparent',
-        borderBottomColor: 'transparent',
-    },
-    avatar: {
-        width: 58,
-        height: 58,
-        borderRadius: radii.pill,
-        backgroundColor: colors.surface,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    badge: {
-        backgroundColor: colors.primary,
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        borderRadius: radii.pill,
-    },
-});
 
+const styles = StyleSheet.create({
+  wrap: {
+    alignItems: "center",
+    gap: 6,
+  },
+  ring: {
+    width: 76,
+    height: 76,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  ringProgress: {
+    position: "absolute",
+    width: 76,
+    height: 76,
+    borderRadius: radii.pill,
+    borderWidth: 6,
+    borderColor: colors.primary,
+    borderLeftColor: "transparent",
+    borderBottomColor: "transparent",
+  },
+  avatar: {
+    width: 58,
+    height: 58,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+  },
+  initials: {
+    color: colors.primary,
+  },
+  badge: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+  },
+});
