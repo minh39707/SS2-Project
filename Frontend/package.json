@@ -5,9 +5,12 @@
   "scripts": {
     "start": "expo start",
     "configure:lan": "node ./scripts/configure-lan.js",
+    "configure:emulator": "node ./scripts/configure-emulator.js",
     "start:lan": "npm run configure:lan && expo start",
+    "start:emulator": "npm run configure:emulator && expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
+    "android:emulator": "npm run configure:emulator && expo start --android",
     "android:lan": "npm run configure:lan && expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",

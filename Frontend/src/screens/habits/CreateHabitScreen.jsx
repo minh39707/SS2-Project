@@ -50,9 +50,19 @@ const PREFERRED_TIME_OPTIONS = [
 ];
 const TARGET_UNIT_OPTIONS = [
   { label: "times", value: "times" },
-  { label: "glasses", value: "glasses" },
   { label: "steps", value: "steps" },
-  { label: "liters", value: "liters" },
+  { label: "cal", value: "cal" },
+  { label: "kcal", value: "kcal" },
+  { label: "seconds", value: "seconds" },
+  { label: "minutes", value: "minutes" },
+  { label: "hours", value: "hours" },
+  { label: "g", value: "g" },
+  { label: "kg", value: "kg" },
+  { label: "mL", value: "mL" },
+  { label: "L", value: "L" },
+  { label: "m", value: "m" },
+  { label: "km", value: "km" },
+  { label: "Custom", value: "custom" },
 ];
 const REMINDER_BY_TIME = {
   morning: "08:00",
@@ -100,6 +110,18 @@ function toDateFromValue(value) {
   return Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
 }
 
+function normalizeTargetValueInput(value) {
+  return value.replace(",", ".").replace(/[^0-9.]/g, "");
+}
+
+function getTargetValueDisplay(value) {
+  if (!Number.isFinite(value)) {
+    return "1";
+  }
+
+  return Number.isInteger(value) ? String(value) : String(value);
+}
+
 export default function CreateHabitScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -110,8 +132,9 @@ export default function CreateHabitScreen() {
   const [habitName, setHabitName] = useState("");
   const [frequencyType, setFrequencyType] = useState("daily");
   const [frequencyDays, setFrequencyDays] = useState(ALL_WEEK_DAYS);
-  const [targetValue, setTargetValue] = useState(1);
+  const [targetValueInput, setTargetValueInput] = useState("1");
   const [targetUnit, setTargetUnit] = useState("times");
+  const [customTargetUnit, setCustomTargetUnit] = useState("");
   const [preferredTime, setPreferredTime] = useState("morning");
   const [selectedCategory, setSelectedCategory] = useState(LIFE_AREA_OPTIONS[0]);
   const [startDate, setStartDate] = useState(() => new Date());
@@ -153,8 +176,12 @@ export default function CreateHabitScreen() {
               ? ALL_WEEK_DAYS
               : [],
         );
-        setTargetValue(Number(habit.targetValue ?? 1));
-        setTargetUnit(habit.targetUnit ?? "times");
+        setTargetValueInput(getTargetValueDisplay(Number(habit.targetValue ?? 1)));
+        const matchedTargetUnit = TARGET_UNIT_OPTIONS.find(
+          (option) => option.value === habit.targetUnit,
+        );
+        setTargetUnit(matchedTargetUnit ? matchedTargetUnit.value : "custom");
+        setCustomTargetUnit(matchedTargetUnit ? "" : habit.targetUnit ?? "");
         setPreferredTime(habit.preferredTime ?? "morning");
         setSelectedCategory(resolveCategoryOption(habit.categoryLabel));
         setStartDate(toDateFromValue(habit.startDate));
@@ -243,8 +270,16 @@ export default function CreateHabitScreen() {
     });
   };
 
+  const resolvedTargetValue = Number.parseFloat(targetValueInput);
+  const safeTargetValue = Number.isFinite(resolvedTargetValue)
+    ? resolvedTargetValue
+    : 1;
+  const resolvedTargetUnit =
+    targetUnit === "custom" ? customTargetUnit.trim() : targetUnit;
+
   const adjustTargetValue = (delta) => {
-    setTargetValue((currentValue) => Math.max(1, currentValue + delta));
+    const nextValue = Math.max(0.1, safeTargetValue + delta);
+    setTargetValueInput(getTargetValueDisplay(nextValue));
   };
 
   const openReminderPicker = (index) => {
@@ -281,8 +316,8 @@ export default function CreateHabitScreen() {
   const buildPayload = () => ({
     title: habitName.trim(),
     habitType: "positive",
-    targetValue,
-    targetUnit,
+    targetValue: safeTargetValue,
+    targetUnit: resolvedTargetUnit,
     frequencyType,
     frequencyDays: frequencyType === "weekly" ? frequencyDays : [],
     preferredTime,
@@ -301,6 +336,16 @@ export default function CreateHabitScreen() {
 
     if (frequencyType === "weekly" && frequencyDays.length === 0) {
       setError("Please choose at least one active day.");
+      return;
+    }
+
+    if (!Number.isFinite(resolvedTargetValue) || resolvedTargetValue <= 0) {
+      setError("Please enter a valid target number greater than zero.");
+      return;
+    }
+
+    if (!resolvedTargetUnit) {
+      setError("Please choose or enter a target unit.");
       return;
     }
 
@@ -489,7 +534,7 @@ export default function CreateHabitScreen() {
               Your Goal
             </Text>
             <Text color="primary" variant="caption">
-              {targetValue} {targetUnit} per{" "}
+              {safeTargetValue} {resolvedTargetUnit || "unit"} per{" "}
               {frequencyType === "monthly" ? "month" : "day"}
             </Text>
           </View>
@@ -506,16 +551,30 @@ export default function CreateHabitScreen() {
             </Pressable>
 
             <View style={styles.goalValueWrap}>
-              <Text style={styles.goalValue} variant="title">
-                {targetValue}
+              <Text color="muted" variant="caption">
+                Enter your target
               </Text>
+              <TextInput
+                keyboardType="decimal-pad"
+                onChangeText={(text) => {
+                  setTargetValueInput(normalizeTargetValueInput(text));
+                  if (error) {
+                    setError(null);
+                  }
+                }}
+                placeholder="1"
+                placeholderTextColor="#AAB5C4"
+                style={styles.goalValueInput}
+                value={targetValueInput}
+              />
               <Text color="muted" variant="body">
-                {targetUnit} per {frequencyType === "monthly" ? "month" : "day"}
+                {resolvedTargetUnit || "unit"} per{" "}
+                {frequencyType === "monthly" ? "month" : "day"}
               </Text>
             </View>
 
             <Pressable
-              onPress={() => adjustTargetValue(1)}
+              onPress={() => adjustTargetValue(safeTargetValue < 10 ? 1 : 0.5)}
               style={({ pressed }) => [
                 styles.goalAction,
                 pressed && styles.goalActionPressed,
@@ -532,7 +591,12 @@ export default function CreateHabitScreen() {
               return (
                 <Pressable
                   key={option.value}
-                  onPress={() => setTargetUnit(option.value)}
+                  onPress={() => {
+                    setTargetUnit(option.value);
+                    if (error) {
+                      setError(null);
+                    }
+                  }}
                   style={[
                     styles.unitChip,
                     isActive && styles.unitChipActive,
@@ -549,6 +613,21 @@ export default function CreateHabitScreen() {
               );
             })}
           </View>
+
+          {targetUnit === "custom" ? (
+            <TextInput
+              onChangeText={(text) => {
+                setCustomTargetUnit(text);
+                if (error) {
+                  setError(null);
+                }
+              }}
+              placeholder="Enter custom unit"
+              placeholderTextColor="#AAB5C4"
+              style={styles.unitInput}
+              value={customTargetUnit}
+            />
+          ) : null}
         </View>
 
         <View style={styles.section}>
@@ -921,10 +1000,24 @@ const styles = StyleSheet.create({
   goalValueWrap: {
     alignItems: "center",
     gap: 4,
+    flex: 1,
   },
   goalValue: {
     fontSize: 36,
     lineHeight: 42,
+  },
+  goalValueInput: {
+    minWidth: 110,
+    minHeight: 56,
+    borderRadius: radii.xl,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: "#D9E2EF",
+    paddingHorizontal: spacing.md,
+    textAlign: "center",
+    color: colors.text,
+    fontSize: 30,
+    fontWeight: "700",
   },
   unitRow: {
     flexDirection: "row",
@@ -942,6 +1035,16 @@ const styles = StyleSheet.create({
   },
   unitChipTextActive: {
     fontWeight: "700",
+  },
+  unitInput: {
+    minHeight: 52,
+    borderRadius: radii.xl,
+    backgroundColor: "#F7FAFD",
+    borderWidth: 1,
+    borderColor: "#D9E2EF",
+    paddingHorizontal: spacing.md,
+    color: colors.text,
+    fontSize: 15,
   },
   timeRow: {
     flexDirection: "row",

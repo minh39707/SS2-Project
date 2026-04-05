@@ -1,6 +1,7 @@
 const express = require('express');
 const { supabase } = require('../supabase');
 const { requireUser } = require('../middleware/auth');
+const { buildStats, calculateGlobalStreak } = require('../utils/habitProgress');
 
 const router = express.Router();
 const AVATAR_BUCKET = 'avatars';
@@ -255,36 +256,24 @@ router.post('/me/avatar-upload', requireUser, async (req, res) => {
 // GET /api/users/me/stats
 router.get('/me/stats', requireUser, async (req, res) => {
   try {
-    const now = new Date();
-    const sevenDaysAgo = new Date(now);
-    sevenDaysAgo.setDate(now.getDate() - 7);
-
     const [characterResult, logsResult] = await Promise.all([
       supabase
         .from('characters')
-        .select('current_hp, max_hp, current_exp')
+        .select('level, current_hp, max_hp, current_exp, exp_to_next_level')
         .eq('user_id', req.userId)
         .single(),
       supabase
         .from('habit_logs')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', req.userId)
-        .gte('log_date', sevenDaysAgo.toISOString().split('T')[0]),
+        .select('log_date, status')
+        .eq('user_id', req.userId),
     ]);
     const { data: character } = characterResult;
-    const { count: weekLogs } = logsResult;
+    const completedDateKeys = (logsResult.data ?? [])
+      .filter((log) => !log.status || log.status === 'completed')
+      .map((log) => log.log_date);
+    const { streak } = calculateGlobalStreak(completedDateKeys);
 
-    const hp = character?.current_hp ?? 100;
-    const maxHp = character?.max_hp ?? 100;
-    // Scale EXP to 100-max for frontend progress bar
-    const exp = character?.current_exp ?? 0;
-    const streak = weekLogs ?? 0;
-
-    return res.json([
-      { label: 'HP', value: hp, max: maxHp, color: '#EF4444', icon: 'heart' },
-      { label: 'EXP', value: exp % 100, max: 100, color: '#3B82F6', icon: 'flash' }, // Using modulo 100 to show bar progress
-      { label: 'Streaks', value: streak, max: 7, color: '#F59E0B', icon: 'flame' },
-    ]);
+    return res.json(buildStats(character, streak));
   } catch (err) {
     console.error('Get stats error:', err);
     return res.status(500).json({ message: 'Internal server error.' });

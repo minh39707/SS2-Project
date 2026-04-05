@@ -6,6 +6,13 @@ const {
   toFrequencyDayKeys,
   toFrequencyDayNumbers,
 } = require("../utils/frequencyDays");
+const {
+  applyCharacterProgress,
+  buildHabitProgressMap,
+  calculateHabitStreak,
+  isHabitScheduledOnDate,
+  toDateKey,
+} = require("../utils/habitProgress");
 
 const router = express.Router();
 
@@ -217,7 +224,7 @@ function validatePayload(payload) {
   return null;
 }
 
-function serializeHabit(habit, categoryMap) {
+function serializeHabit(habit, categoryMap, progress = {}) {
   const metadata = extractHabitMetadata(habit.description, habit.created_at);
 
   return {
@@ -236,6 +243,13 @@ function serializeHabit(habit, categoryMap) {
     isActive: habit.is_active ?? true,
     createdAt: habit.created_at,
     updatedAt: habit.updated_at,
+    completedToday: progress.completedToday ?? false,
+    currentStreak: progress.currentStreak ?? 0,
+    bestStreak: progress.bestStreak ?? 0,
+    lastCompletedAt: progress.lastCompletedAt ?? null,
+    isScheduledToday: progress.isScheduledToday ?? false,
+    expReward: Number(habit.exp_reward ?? 0),
+    streakBonusExp: Number(habit.streak_bonus_exp ?? 0),
   };
 }
 
@@ -254,15 +268,119 @@ async function fetchHabitById(habitId, userId) {
   return data;
 }
 
+async function fetchHabitLogs(userId, habitId = null) {
+  let query = supabase
+    .from("habit_logs")
+    .select("log_id, habit_id, log_date, status, hp_change, exp_change, streak_at_log")
+    .eq("user_id", userId);
+
+  if (habitId) {
+    query = query.eq("habit_id", habitId);
+  }
+
+  const { data, error } = await query.order("log_date", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
+}
+
+async function fetchTodayHabitLog(userId, habitId, dateKey) {
+  const { data, error } = await supabase
+    .from("habit_logs")
+    .select("log_id, habit_id, log_date, status, hp_change, exp_change, streak_at_log")
+    .eq("user_id", userId)
+    .eq("habit_id", habitId)
+    .eq("log_date", dateKey)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+async function fetchCharacter(userId) {
+  const { data, error } = await supabase
+    .from("characters")
+    .select("character_id, level, current_hp, max_hp, current_exp, exp_to_next_level")
+    .eq("user_id", userId)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+async function syncHabitStreakRecord(userId, habitId, streak) {
+  const { data: existingRecord, error: existingRecordError } = await supabase
+    .from("habit_streaks")
+    .select("streak_id")
+    .eq("user_id", userId)
+    .eq("habit_id", habitId)
+    .limit(1)
+    .maybeSingle();
+
+  if (existingRecordError) {
+    throw existingRecordError;
+  }
+
+  const payload = {
+    user_id: userId,
+    habit_id: habitId,
+    current_streak: streak.currentStreak,
+    best_streak: streak.bestStreak,
+    last_completed_at: streak.lastCompletedAt,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existingRecord?.streak_id) {
+    const { error } = await supabase
+      .from("habit_streaks")
+      .update(payload)
+      .eq("streak_id", existingRecord.streak_id);
+
+    if (error) {
+      throw error;
+    }
+
+    return;
+  }
+
+  const { error } = await supabase.from("habit_streaks").insert(payload);
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function updateCharacterProgress(userId, characterId, payload) {
+  const { error } = await supabase
+    .from("characters")
+    .update(payload)
+    .eq("user_id", userId)
+    .eq("character_id", characterId);
+
+  if (error) {
+    throw error;
+  }
+}
+
 router.get("/", requireUser, async (req, res) => {
   try {
-    const [categoryMap, habitsResult] = await Promise.all([
+    const [categoryMap, habitsResult, logs] = await Promise.all([
       loadCategoryMap(),
       supabase
         .from("habits")
         .select("*")
         .eq("user_id", req.userId)
         .order("created_at", { ascending: false }),
+      fetchHabitLogs(req.userId),
     ]);
 
     if (habitsResult.error) {
@@ -270,9 +388,11 @@ router.get("/", requireUser, async (req, res) => {
       return res.status(400).json({ message: habitsResult.error.message });
     }
 
+    const progressMap = buildHabitProgressMap(habitsResult.data ?? [], logs);
+
     return res.json({
       habits: (habitsResult.data ?? []).map((habit) =>
-        serializeHabit(habit, categoryMap),
+        serializeHabit(habit, categoryMap, progressMap.get(habit.habit_id)),
       ),
     });
   } catch (error) {
@@ -283,18 +403,189 @@ router.get("/", requireUser, async (req, res) => {
 
 router.get("/:habitId", requireUser, async (req, res) => {
   try {
-    const [categoryMap, habit] = await Promise.all([
+    const [categoryMap, habit, logs] = await Promise.all([
       loadCategoryMap(),
       fetchHabitById(req.params.habitId, req.userId),
+      fetchHabitLogs(req.userId, req.params.habitId),
     ]);
 
     if (!habit) {
       return res.status(404).json({ message: "Habit not found." });
     }
 
-    return res.json({ habit: serializeHabit(habit, categoryMap) });
+    const progressMap = buildHabitProgressMap([habit], logs);
+
+    return res.json({
+      habit: serializeHabit(habit, categoryMap, progressMap.get(habit.habit_id)),
+    });
   } catch (error) {
     console.error("Get habit error:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+});
+
+router.post("/:habitId/complete", requireUser, async (req, res) => {
+  try {
+    const todayDateKey = toDateKey();
+    const [categoryMap, habit, character, existingLogs, todayLog] = await Promise.all([
+      loadCategoryMap(),
+      fetchHabitById(req.params.habitId, req.userId),
+      fetchCharacter(req.userId),
+      fetchHabitLogs(req.userId, req.params.habitId),
+      fetchTodayHabitLog(req.userId, req.params.habitId, todayDateKey),
+    ]);
+
+    if (!habit) {
+      return res.status(404).json({ message: "Habit not found." });
+    }
+
+    if (!isHabitScheduledOnDate(habit, todayDateKey)) {
+      return res.status(400).json({
+        message: "This habit is not scheduled for today.",
+      });
+    }
+
+    if (todayLog && (!todayLog.status || todayLog.status === "completed")) {
+      const progressMap = buildHabitProgressMap([habit], existingLogs, todayDateKey);
+      return res.json({
+        habit: serializeHabit(habit, categoryMap, progressMap.get(habit.habit_id)),
+        rewards: { exp: 0, hp: 0 },
+      });
+    }
+
+    const completedDateKeys = existingLogs
+      .filter((log) => !log.status || log.status === "completed")
+      .map((log) => log.log_date);
+    const nextStreak = calculateHabitStreak(
+      habit,
+      [...completedDateKeys, todayDateKey],
+      todayDateKey,
+    );
+    const expChange =
+      Number(habit.exp_reward ?? 0) +
+      (nextStreak.currentStreak > 1 ? Number(habit.streak_bonus_exp ?? 0) : 0);
+    const hpChange = Number(habit.hp_reward ?? 0);
+
+    const { data: createdLog, error: createLogError } = await supabase
+      .from("habit_logs")
+      .insert({
+        habit_id: habit.habit_id,
+        user_id: req.userId,
+        log_date: todayDateKey,
+        status: "completed",
+        value_recorded: Number(habit.target_value ?? 1),
+        hp_change: hpChange,
+        exp_change: expChange,
+        streak_at_log: nextStreak.currentStreak,
+        source: "manual",
+      })
+      .select("log_id")
+      .single();
+
+    if (createLogError) {
+      console.error("Complete habit error:", createLogError);
+      return res.status(400).json({ message: createLogError.message });
+    }
+
+    await Promise.all([
+      syncHabitStreakRecord(req.userId, habit.habit_id, nextStreak),
+      updateCharacterProgress(
+        req.userId,
+        character.character_id,
+        applyCharacterProgress(character, expChange, hpChange),
+      ),
+    ]);
+
+    return res.json({
+      habit: serializeHabit(habit, categoryMap, {
+        completedToday: true,
+        currentStreak: nextStreak.currentStreak,
+        bestStreak: nextStreak.bestStreak,
+        lastCompletedAt: nextStreak.lastCompletedAt,
+        isScheduledToday: true,
+      }),
+      rewards: {
+        exp: expChange,
+        hp: hpChange,
+        logId: createdLog?.log_id ?? null,
+      },
+    });
+  } catch (error) {
+    console.error("Complete habit error:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+});
+
+router.delete("/:habitId/complete", requireUser, async (req, res) => {
+  try {
+    const todayDateKey = toDateKey();
+    const [categoryMap, habit, character, existingLogs, todayLog] = await Promise.all([
+      loadCategoryMap(),
+      fetchHabitById(req.params.habitId, req.userId),
+      fetchCharacter(req.userId),
+      fetchHabitLogs(req.userId, req.params.habitId),
+      fetchTodayHabitLog(req.userId, req.params.habitId, todayDateKey),
+    ]);
+
+    if (!habit) {
+      return res.status(404).json({ message: "Habit not found." });
+    }
+
+    if (!todayLog || (todayLog.status && todayLog.status !== "completed")) {
+      const progressMap = buildHabitProgressMap([habit], existingLogs, todayDateKey);
+      return res.json({
+        habit: serializeHabit(habit, categoryMap, progressMap.get(habit.habit_id)),
+        rewards: { exp: 0, hp: 0 },
+      });
+    }
+
+    const { error: deleteLogError } = await supabase
+      .from("habit_logs")
+      .delete()
+      .eq("log_id", todayLog.log_id);
+
+    if (deleteLogError) {
+      console.error("Undo complete habit error:", deleteLogError);
+      return res.status(400).json({ message: deleteLogError.message });
+    }
+
+    const remainingDateKeys = existingLogs
+      .filter(
+        (log) =>
+          log.log_id !== todayLog.log_id &&
+          (!log.status || log.status === "completed"),
+      )
+      .map((log) => log.log_date);
+    const nextStreak = calculateHabitStreak(habit, remainingDateKeys, todayDateKey);
+
+    await Promise.all([
+      syncHabitStreakRecord(req.userId, habit.habit_id, nextStreak),
+      updateCharacterProgress(
+        req.userId,
+        character.character_id,
+        applyCharacterProgress(
+          character,
+          -(todayLog.exp_change ?? 0),
+          -(todayLog.hp_change ?? 0),
+        ),
+      ),
+    ]);
+
+    return res.json({
+      habit: serializeHabit(habit, categoryMap, {
+        completedToday: false,
+        currentStreak: nextStreak.currentStreak,
+        bestStreak: nextStreak.bestStreak,
+        lastCompletedAt: nextStreak.lastCompletedAt,
+        isScheduledToday: isHabitScheduledOnDate(habit, todayDateKey),
+      }),
+      rewards: {
+        exp: -(todayLog.exp_change ?? 0),
+        hp: -(todayLog.hp_change ?? 0),
+      },
+    });
+  } catch (error) {
+    console.error("Undo complete habit error:", error);
     return res.status(500).json({ message: "Internal server error." });
   }
 });

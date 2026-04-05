@@ -1,4 +1,3 @@
-import Constants from "expo-constants";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { Platform } from "react-native";
@@ -8,10 +7,6 @@ import { supabase } from "@/src/services/supabase";
 WebBrowser.maybeCompleteAuthSession();
 
 const OAUTH_CALLBACK_PATH = "auth-callback";
-
-function isExpoGo() {
-  return Constants.executionEnvironment === "storeClient";
-}
 
 function getSearchParams(urlPart = "") {
   const normalizedValue =
@@ -151,9 +146,7 @@ async function syncOAuthProfile(provider, apiBaseUrlOverride = null) {
 }
 
 export function getOAuthRedirectUrl() {
-  return isExpoGo()
-    ? Linking.createURL(OAUTH_CALLBACK_PATH, { scheme: "exp" })
-    : Linking.createURL(OAUTH_CALLBACK_PATH);
+  return Linking.createURL(OAUTH_CALLBACK_PATH);
 }
 
 export async function signInWithOAuth(provider) {

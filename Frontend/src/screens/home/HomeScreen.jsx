@@ -12,7 +12,11 @@ import ProfileAvatar from "@/src/components/ui/ProfileAvatar";
 import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, spacing } from "@/src/constants/theme";
-import { getDashboardData } from "@/src/services/habit.service";
+import {
+  completeHabit,
+  getDashboardData,
+  uncompleteHabit,
+} from "@/src/services/habit.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
 import {
   formatTimeLabel,
@@ -80,14 +84,17 @@ function getTodayKey() {
   return orderedDays[(day + 6) % 7];
 }
 
-function buildWeekEntries(calendarDays, activeDays, todayKey, streak) {
+function buildWeekEntries(calendarDays, activeDays, todayKey) {
   const todayIndex = orderedDays.indexOf(todayKey);
-  const entries = orderedDays.map((day, index) => {
+
+  return orderedDays.map((day, index) => {
     const calendarDay = calendarDays?.[index];
     let state = "inactive";
 
     if (calendarDay?.status === "done") {
       state = "done";
+    } else if (calendarDay?.status === "missed") {
+      state = "missed";
     } else if (day === todayKey) {
       state = "today";
     } else if (activeDays.has(day) && index < todayIndex) {
@@ -101,28 +108,9 @@ function buildWeekEntries(calendarDays, activeDays, todayKey, streak) {
       label: dayLabels[day][0],
       fullLabel: dayLabels[day],
       state,
+      streak: !!calendarDay?.streak,
     };
   });
-
-  const streakKeys = new Set();
-  let remainingStreak = Math.max(0, streak);
-
-  for (let index = todayIndex; index >= 0 && remainingStreak > 0; index -= 1) {
-    if (entries[index].state === "done" || entries[index].state === "today") {
-      streakKeys.add(entries[index].key);
-      remainingStreak -= 1;
-      continue;
-    }
-
-    if (entries[index].state === "missed") {
-      break;
-    }
-  }
-
-  return entries.map((entry) => ({
-    ...entry,
-    streak: streakKeys.has(entry.key),
-  }));
 }
 
 function getMissionRoute(router, missionId) {
@@ -151,6 +139,9 @@ export default function HomeScreen() {
   const [dashboardData, setDashboardData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [hasLoadedDashboard, setHasLoadedDashboard] = useState(false);
+  const [isUpdatingMission, setIsUpdatingMission] = useState(false);
+  const [updatingHabitId, setUpdatingHabitId] = useState(null);
+  const [missionError, setMissionError] = useState(null);
 
   useEffect(() => {
     if (!hydrated) {
@@ -175,6 +166,7 @@ export default function HomeScreen() {
         const result = await getDashboardData();
         setDashboardData(result);
         setHasLoadedDashboard(true);
+        setMissionError(null);
       } catch (error) {
         console.error("Failed to load dashboard", error);
       } finally {
@@ -232,23 +224,42 @@ export default function HomeScreen() {
     dashboardData?.calendarDays ?? [],
     activeDays,
     todayKey,
-    dashboardData?.stats?.find((item) => item.label === "Streaks")?.value ?? 0,
   );
-
-  const hp = dashboardData?.stats?.find((item) => item.label === "HP")?.value ?? 50;
+  const player = dashboardData?.player ?? null;
+  const hp =
+    player?.currentHp ??
+    dashboardData?.stats?.find((item) => item.label === "HP")?.value ??
+    50;
+  const hpMax =
+    player?.maxHp ??
+    dashboardData?.stats?.find((item) => item.label === "HP")?.max ??
+    100;
   const streak =
-    dashboardData?.stats?.find((item) => item.label === "Streaks")?.value ?? 0;
-  const exp = dashboardData?.stats?.find((item) => item.label === "EXP")?.value ?? 0;
-  const level = Math.max(1, Math.floor(exp / 100) + 1);
-  const expGoal = level * 100;
+    player?.streak ??
+    dashboardData?.stats?.find((item) => item.label === "Streaks")?.value ??
+    0;
+  const exp =
+    player?.currentExp ??
+    dashboardData?.stats?.find((item) => item.label === "EXP")?.value ??
+    0;
+  const level = player?.level ?? 1;
+  const expGoal =
+    player?.expToNextLevel ??
+    dashboardData?.stats?.find((item) => item.label === "EXP")?.max ??
+    100;
   const nextLevelRemaining = Math.max(expGoal - exp, 0);
   const expProgress = expGoal > 0 ? Math.max(0, Math.min(1, exp / expGoal)) : 0;
-  const hpProgress = Math.max(0, Math.min(1, hp / 100));
+  const hpProgress = hpMax > 0 ? Math.max(0, Math.min(1, hp / hpMax)) : 0;
   const todayProgressRatio = dashboardData?.todayProgress ?? 0;
-  const trackedMissionCount = Math.max(1, hasAnyHabits ? Math.min(4, (dashboardData?.quickActions?.length ?? 1)) : 1);
+  const trackedMissionCount = Math.max(
+    1,
+    dashboardData?.dailySummary?.totalCount ??
+      (hasAnyHabits ? Math.min(4, dashboardData?.quickActions?.length ?? 1) : 1),
+  );
   const completedMissionCount = Math.min(
     trackedMissionCount,
-    Math.round(todayProgressRatio * trackedMissionCount),
+    dashboardData?.dailySummary?.completedCount ??
+      Math.round(todayProgressRatio * trackedMissionCount),
   );
   const profileName = userProfile?.name ?? "Habit Hero";
   const profileAvatarUrl = userProfile?.avatarUrl ?? null;
@@ -274,8 +285,15 @@ export default function HomeScreen() {
             : "sparkles-outline",
       title: action.title,
       caption: action.description,
-      reward: action.id === primaryAction?.id ? "+20 EXP" : "+10 EXP",
-      actionLabel: action.id === primaryAction?.id ? "Open mission" : "Open",
+      reward: `+${action.expReward ?? 20} EXP`,
+      actionLabel: action.completedToday
+        ? "Undo completion"
+        : action.isScheduledToday
+          ? "Complete now"
+          : "Open mission",
+      completedToday: action.completedToday,
+      isScheduledToday: action.isScheduledToday,
+      currentStreak: action.currentStreak ?? 0,
     })) ?? [];
 
   if (!hasAnyHabits) {
@@ -293,6 +311,87 @@ export default function HomeScreen() {
 
   const primaryMission = missionItems[0];
   const habitListItems = missionItems.slice(0, 4);
+
+  const refreshDashboard = async () => {
+    const refreshedDashboard = await getDashboardData({ forceRefresh: true });
+    setDashboardData(refreshedDashboard);
+    return refreshedDashboard;
+  };
+
+  const handlePrimaryMission = async () => {
+    if (isUpdatingMission) {
+      return;
+    }
+
+    if (!primaryMission) {
+      router.push("/habit-create");
+      return;
+    }
+
+    if (primaryMission.id === "empty-first-habit") {
+      router.push("/habit-create");
+      return;
+    }
+
+    if (!primaryMission.isScheduledToday) {
+      getMissionRoute(router, primaryMission.id);
+      return;
+    }
+
+    setIsUpdatingMission(true);
+    setMissionError(null);
+
+    try {
+      if (primaryMission.completedToday) {
+        await uncompleteHabit(primaryMission.id, userProfile);
+      } else {
+        await completeHabit(primaryMission.id, userProfile);
+      }
+
+      await refreshDashboard();
+    } catch (error) {
+      setMissionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to update today's mission right now.",
+      );
+    } finally {
+      setIsUpdatingMission(false);
+    }
+  };
+
+  const handleHabitCardAction = async (mission) => {
+    if (!mission?.id || mission.id === "empty-first-habit") {
+      router.push("/habit-create");
+      return;
+    }
+
+    if (!mission.isScheduledToday) {
+      getMissionRoute(router, mission.id);
+      return;
+    }
+
+    setUpdatingHabitId(mission.id);
+    setMissionError(null);
+
+    try {
+      if (mission.completedToday) {
+        await uncompleteHabit(mission.id, userProfile);
+      } else {
+        await completeHabit(mission.id, userProfile);
+      }
+
+      await refreshDashboard();
+    } catch (error) {
+      setMissionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to update this habit right now.",
+      );
+    } finally {
+      setUpdatingHabitId(null);
+    }
+  };
 
   return (
     <ScreenContainer contentContainerStyle={styles.content}>
@@ -340,7 +439,7 @@ export default function HomeScreen() {
                     HP
                   </Text>
                   <Text style={styles.statValue} variant="caption">
-                    {hp}/100
+                    {hp}/{hpMax}
                   </Text>
                 </View>
                 <View style={styles.statTrack}>
@@ -457,35 +556,90 @@ export default function HomeScreen() {
         {habitListItems.length > 0 ? (
           <View style={styles.questList}>
             {habitListItems.map((mission) => (
-              <Pressable
-                key={mission.id}
-                onPress={() => getMissionRoute(router, mission.id)}
-                style={({ pressed }) => [
-                  styles.questPressable,
-                  pressed && styles.questPressablePressed,
-                ]}
-              >
+              <View key={mission.id} style={styles.questPressable}>
                 <Card style={styles.questCard}>
-                  <View style={styles.questIconWrap}>
-                    <Ionicons
-                      color={colors.primary}
-                      name={mission.icon}
-                      size={18}
-                    />
-                  </View>
-                  <View style={styles.questCopy}>
-                    <Text variant="subtitle">{mission.title}</Text>
-                    <Text color="muted" variant="body">
-                      {mission.caption}
-                    </Text>
-                  </View>
-                  <View style={styles.questReward}>
-                    <Text color="primary" variant="caption">
-                      {mission.reward}
-                    </Text>
+                  <View style={styles.questMainRow}>
+                    <Pressable
+                      onPress={() => getMissionRoute(router, mission.id)}
+                      style={({ pressed }) => [
+                        styles.questInfoPressable,
+                        pressed && styles.questPressablePressed,
+                      ]}
+                    >
+                      <View style={styles.questIconWrap}>
+                        <Ionicons
+                          color={colors.primary}
+                          name={mission.icon}
+                          size={18}
+                        />
+                      </View>
+                      <View style={styles.questCopy}>
+                        <Text variant="subtitle">{mission.title}</Text>
+                        <Text color="muted" variant="body">
+                          {mission.currentStreak
+                            ? `${mission.caption} - ${mission.currentStreak} day streak`
+                            : mission.caption}
+                        </Text>
+                      </View>
+                    </Pressable>
+
+                    <View style={styles.questSide}>
+                      <View style={styles.questReward}>
+                        <Text color="primary" variant="caption">
+                          {mission.reward}
+                        </Text>
+                      </View>
+
+                      <Pressable
+                        disabled={
+                          updatingHabitId === mission.id ||
+                          !mission.isScheduledToday
+                        }
+                        onPress={() => void handleHabitCardAction(mission)}
+                        style={({ pressed }) => [
+                          styles.questActionButton,
+                          mission.completedToday && styles.questActionButtonDone,
+                          !mission.isScheduledToday &&
+                            styles.questActionButtonDisabled,
+                          pressed &&
+                            updatingHabitId !== mission.id &&
+                            mission.isScheduledToday &&
+                            styles.questActionButtonPressed,
+                        ]}
+                      >
+                        {updatingHabitId === mission.id ? (
+                          <ActivityIndicator color={colors.primary} size="small" />
+                        ) : (
+                          <>
+                            <Ionicons
+                              color={
+                                mission.completedToday ? colors.success : colors.primary
+                              }
+                              name={
+                                mission.completedToday
+                                  ? "refresh-outline"
+                                  : "checkmark-circle-outline"
+                              }
+                              size={15}
+                            />
+                            <Text
+                              color={mission.completedToday ? "success" : "primary"}
+                              style={styles.questActionText}
+                              variant="caption"
+                            >
+                              {mission.completedToday
+                                ? "Undo"
+                                : mission.isScheduledToday
+                                  ? "Complete"
+                                  : "Open"}
+                            </Text>
+                          </>
+                        )}
+                      </Pressable>
+                    </View>
                   </View>
                 </Card>
-              </Pressable>
+              </View>
             ))}
           </View>
         ) : (
@@ -553,6 +707,12 @@ export default function HomeScreen() {
               : "Start with one real-world habit like drinking water, walking after lunch, or reading 15 pages."}
           </Text>
 
+          {missionError ? (
+            <Text style={styles.missionError} variant="caption">
+              {missionError}
+            </Text>
+          ) : null}
+
           <View style={styles.missionInfoRow}>
             <View style={styles.missionInfoChip}>
               <Ionicons color="#64748B" name="time-outline" size={14} />
@@ -571,31 +731,55 @@ export default function HomeScreen() {
 
           <View style={styles.ctaRow}>
             <Pressable
-              onPress={() =>
-                primaryMission
-                  ? getMissionRoute(router, primaryMission.id)
-                  : router.push("/habit-create")
-              }
+              onPress={() => void handlePrimaryMission()}
               style={({ pressed }) => [
                 styles.primaryCta,
+                isUpdatingMission && styles.primaryCtaDisabled,
                 pressed && styles.primaryCtaPressed,
               ]}
             >
-              <Ionicons color={colors.surface} name="checkmark-circle" size={18} />
+              <Ionicons
+                color={colors.surface}
+                name={
+                  primaryMission?.completedToday
+                    ? "refresh-circle"
+                    : primaryMission?.isScheduledToday
+                      ? "checkmark-circle"
+                      : "open-outline"
+                }
+                size={18}
+              />
               <Text color="white" style={styles.primaryCtaText} variant="label">
-                {primaryMission?.actionLabel ?? "Open mission"}
+                {isUpdatingMission
+                  ? "Updating..."
+                  : primaryMission?.actionLabel ?? "Open mission"}
               </Text>
             </Pressable>
             <Pressable
-              onPress={() => router.push("/habit-create")}
+              onPress={() =>
+                primaryMission?.id &&
+                primaryMission.id !== "empty-first-habit"
+                  ? getMissionRoute(router, primaryMission.id)
+                  : router.push("/habit-create")
+              }
               style={({ pressed }) => [
                 styles.secondaryCta,
                 pressed && styles.secondaryCtaPressed,
               ]}
             >
-              <Ionicons color={colors.primary} name="add-circle-outline" size={18} />
+              <Ionicons
+                color={colors.primary}
+                name={
+                  primaryMission?.id && primaryMission.id !== "empty-first-habit"
+                    ? "open-outline"
+                    : "add-circle-outline"
+                }
+                size={18}
+              />
               <Text color="primary" style={styles.secondaryCtaText} variant="label">
-                Add Habit
+                {primaryMission?.id && primaryMission.id !== "empty-first-habit"
+                  ? "Open habit"
+                  : "Add Habit"}
               </Text>
             </Pressable>
           </View>
@@ -797,6 +981,9 @@ const styles = StyleSheet.create({
   todayMissionBody: {
     lineHeight: 22,
   },
+  missionError: {
+    color: colors.danger,
+  },
   missionInfoRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -827,6 +1014,9 @@ const styles = StyleSheet.create({
   },
   primaryCtaPressed: {
     opacity: 0.92,
+  },
+  primaryCtaDisabled: {
+    opacity: 0.78,
   },
   primaryCtaText: {
     fontWeight: "700",
@@ -932,6 +1122,14 @@ const styles = StyleSheet.create({
   },
   questCard: {
     padding: spacing.md,
+  },
+  questMainRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  questInfoPressable: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
@@ -948,6 +1146,10 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  questSide: {
+    alignItems: "flex-end",
+    gap: 8,
+  },
   questReward: {
     paddingHorizontal: 10,
     paddingVertical: 7,
@@ -955,6 +1157,32 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FBFF",
     borderWidth: 1,
     borderColor: "#D6E2F6",
+  },
+  questActionButton: {
+    minWidth: 96,
+    minHeight: 36,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#CFE0FF",
+    backgroundColor: "#F8FBFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+  },
+  questActionButtonDone: {
+    borderColor: "#BEE8CC",
+    backgroundColor: "#F1FBF5",
+  },
+  questActionButtonDisabled: {
+    opacity: 0.55,
+  },
+  questActionButtonPressed: {
+    opacity: 0.82,
+  },
+  questActionText: {
+    fontWeight: "700",
   },
   emptyQuestCard: {
     padding: spacing.md,
@@ -966,3 +1194,4 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
 });
+

@@ -3,11 +3,14 @@ import { Platform } from "react-native";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
 const FALLBACK_REQUEST_TIMEOUT_MS = 4000;
+const HEALTHCHECK_TIMEOUT_MS = 1800;
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 const configuredApiHost = process.env.EXPO_PUBLIC_API_HOST?.trim();
 const configuredApiPort = process.env.EXPO_PUBLIC_API_PORT?.trim() || "4000";
 const configuredApiScheme =
   process.env.EXPO_PUBLIC_API_SCHEME?.trim() || "http";
+let preferredApiBaseUrl = null;
+let resolvingApiBaseUrlPromise = null;
 
 export async function simulateRequest(payload, delay = 180) {
   await new Promise((resolve) => setTimeout(resolve, delay));
@@ -56,32 +59,46 @@ function dedupeBaseUrls(baseUrls) {
   return [...new Set(baseUrls.filter(Boolean))];
 }
 
-function getFallbackApiBaseUrl() {
-  return Platform.OS === "android"
-    ? buildApiBaseUrl("10.0.2.2")
-    : buildApiBaseUrl("localhost");
+function normalizeBaseUrl(baseUrl) {
+  return baseUrl?.replace(/\/+$/, "") ?? null;
+}
+
+function getFallbackApiBaseUrls() {
+  if (Platform.OS === "android") {
+    return dedupeBaseUrls([
+      buildApiBaseUrl("10.0.2.2"),
+      buildApiBaseUrl("10.0.3.2"),
+    ]);
+  }
+
+  return dedupeBaseUrls([buildApiBaseUrl("localhost")]);
 }
 
 function getApiBaseUrls(apiBaseUrl) {
   if (apiBaseUrl) {
-    return dedupeBaseUrls([apiBaseUrl.replace(/\/+$/, "")]);
-  }
-
-  if (configuredApiUrl) {
-    return dedupeBaseUrls([configuredApiUrl.replace(/\/+$/, "")]);
+    return dedupeBaseUrls([normalizeBaseUrl(apiBaseUrl)]);
   }
 
   const expoHost = getExpoHost();
 
   return dedupeBaseUrls([
+    configuredApiUrl ? normalizeBaseUrl(configuredApiUrl) : null,
     configuredApiHost ? buildApiBaseUrl(configuredApiHost) : null,
     expoHost ? buildApiBaseUrl(expoHost) : null,
-    getFallbackApiBaseUrl(),
+    ...getFallbackApiBaseUrls(),
   ]);
 }
 
 export function getApiBaseUrl() {
-  return getApiBaseUrls()[0] ?? getFallbackApiBaseUrl();
+  return preferredApiBaseUrl ?? getApiBaseUrls()[0] ?? getFallbackApiBaseUrls()[0];
+}
+
+function getOrderedCandidateBaseUrls(baseUrlHint = null) {
+  return dedupeBaseUrls([
+    normalizeBaseUrl(baseUrlHint),
+    preferredApiBaseUrl,
+    ...getApiBaseUrls(),
+  ]);
 }
 
 function buildHeaders(headers, hasBody, userId, authToken) {
@@ -179,6 +196,60 @@ async function performRequest(
   return parsedBody;
 }
 
+async function probeApiBaseUrl(baseUrl) {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+
+  if (!normalizedBaseUrl) {
+    return false;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), HEALTHCHECK_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${normalizedBaseUrl}/health`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function resolveApiBaseUrl(forceRefresh = false) {
+  const candidates = getOrderedCandidateBaseUrls();
+
+  if (!forceRefresh && preferredApiBaseUrl && candidates.includes(preferredApiBaseUrl)) {
+    return preferredApiBaseUrl;
+  }
+
+  if (!forceRefresh && resolvingApiBaseUrlPromise) {
+    return resolvingApiBaseUrlPromise;
+  }
+
+  resolvingApiBaseUrlPromise = (async () => {
+    for (const baseUrl of candidates) {
+      if (await probeApiBaseUrl(baseUrl)) {
+        preferredApiBaseUrl = baseUrl;
+        return baseUrl;
+      }
+    }
+
+    preferredApiBaseUrl = candidates[0] ?? getFallbackApiBaseUrls()[0];
+    return preferredApiBaseUrl;
+  })();
+
+  try {
+    return await resolvingApiBaseUrlPromise;
+  } finally {
+    resolvingApiBaseUrlPromise = null;
+  }
+}
+
 export async function apiRequest(path, options = {}) {
   const {
     apiBaseUrl,
@@ -190,22 +261,23 @@ export async function apiRequest(path, options = {}) {
     ...requestInit
   } = options;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const method = (requestInit.method ?? "GET").toUpperCase();
-  const baseUrls = getApiBaseUrls(apiBaseUrl);
-  const shouldRetryWithFallback =
-    !apiBaseUrl && !configuredApiUrl && (method === "GET" || method === "HEAD");
+  const explicitBaseUrl = normalizeBaseUrl(apiBaseUrl);
+  const resolvedBaseUrl = explicitBaseUrl ?? (await resolveApiBaseUrl());
+  const baseUrls = explicitBaseUrl
+    ? [explicitBaseUrl]
+    : getOrderedCandidateBaseUrls(resolvedBaseUrl);
 
   let lastError = null;
 
   for (let index = 0; index < baseUrls.length; index += 1) {
     const baseUrl = baseUrls[index];
     const attemptTimeoutMs =
-      index === 0 || !shouldRetryWithFallback
+      index === 0
         ? timeoutMs
         : Math.min(timeoutMs, FALLBACK_REQUEST_TIMEOUT_MS);
 
     try {
-      return await performRequest(baseUrl, normalizedPath, {
+      const response = await performRequest(baseUrl, normalizedPath, {
         ...requestInit,
         body,
         headers,
@@ -213,6 +285,12 @@ export async function apiRequest(path, options = {}) {
         authToken,
         timeoutMs: attemptTimeoutMs,
       });
+
+      if (!explicitBaseUrl) {
+        preferredApiBaseUrl = baseUrl;
+      }
+
+      return response;
     } catch (error) {
       if (!(error instanceof ApiConnectivityError)) {
         throw error;
@@ -220,7 +298,15 @@ export async function apiRequest(path, options = {}) {
 
       lastError = error;
 
-      if (!shouldRetryWithFallback || index === baseUrls.length - 1) {
+      if (!explicitBaseUrl && preferredApiBaseUrl === baseUrl) {
+        preferredApiBaseUrl = null;
+      }
+
+      if (
+        explicitBaseUrl ||
+        error.cause?.name === "AbortError" ||
+        index === baseUrls.length - 1
+      ) {
         throw error;
       }
     }

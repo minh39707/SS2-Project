@@ -18,7 +18,12 @@ import SecondaryButton from "@/src/components/SecondaryButton";
 import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, shadows, spacing } from "@/src/constants/theme";
-import { deleteHabit, listHabits } from "@/src/services/habit.service";
+import {
+  completeHabit,
+  deleteHabit,
+  listHabits,
+  uncompleteHabit,
+} from "@/src/services/habit.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
 import { formatTimeLabel } from "@/src/utils/onboarding";
 
@@ -55,6 +60,7 @@ export default function ManageHabitsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [togglingId, setTogglingId] = useState(null);
 
   useEffect(() => {
     if (!completed || !userProfile?.id || !isFocused) {
@@ -138,6 +144,36 @@ export default function ManageHabitsScreen() {
       );
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleToggleComplete = async (habit) => {
+    setTogglingId(habit.id);
+    setError(null);
+
+    try {
+      const response = habit.completedToday
+        ? await uncompleteHabit(habit.id, userProfile)
+        : await completeHabit(habit.id, userProfile);
+      const updatedHabit = response?.habit ?? null;
+
+      if (!updatedHabit) {
+        throw new Error("Unable to refresh this habit right now.");
+      }
+
+      setHabits((currentHabits) =>
+        currentHabits.map((currentHabit) =>
+          currentHabit.id === habit.id ? updatedHabit : currentHabit,
+        ),
+      );
+    } catch (toggleError) {
+      setError(
+        toggleError instanceof Error
+          ? toggleError.message
+          : "Unable to update this habit right now.",
+      );
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -272,9 +308,91 @@ export default function ManageHabitsScreen() {
                     {habit.preferredTime ?? "morning"}
                   </Text>
                 </View>
+
+                <View style={styles.metaChip}>
+                  <Ionicons color="#F59E0B" name="flame-outline" size={14} />
+                  <Text color="muted" variant="caption">
+                    {habit.currentStreak ?? 0} day streak
+                  </Text>
+                </View>
+
+                <View
+                  style={[
+                    styles.statusChip,
+                    habit.completedToday && styles.statusChipDone,
+                    habit.isScheduledToday && !habit.completedToday && styles.statusChipToday,
+                  ]}
+                >
+                  <Ionicons
+                    color={
+                      habit.completedToday
+                        ? colors.success
+                        : habit.isScheduledToday
+                          ? colors.primary
+                          : "#64748B"
+                    }
+                    name={
+                      habit.completedToday
+                        ? "checkmark-circle-outline"
+                        : habit.isScheduledToday
+                          ? "sparkles-outline"
+                          : "calendar-outline"
+                    }
+                    size={14}
+                  />
+                  <Text
+                    color={
+                      habit.completedToday
+                        ? "success"
+                        : habit.isScheduledToday
+                          ? "primary"
+                          : "muted"
+                    }
+                    variant="caption"
+                  >
+                    {habit.completedToday
+                      ? "Completed today"
+                      : habit.isScheduledToday
+                        ? "Due today"
+                        : "Not due today"}
+                  </Text>
+                </View>
               </View>
 
               <View style={styles.actionsRow}>
+                <Pressable
+                  disabled={togglingId === habit.id || !habit.isScheduledToday}
+                  onPress={() => void handleToggleComplete(habit)}
+                  style={({ pressed }) => [
+                    styles.completeButton,
+                    habit.completedToday && styles.completeButtonDone,
+                    !habit.isScheduledToday && styles.completeButtonDisabled,
+                    pressed &&
+                      togglingId !== habit.id &&
+                      habit.isScheduledToday &&
+                      styles.completeButtonPressed,
+                  ]}
+                >
+                  {togglingId === habit.id ? (
+                    <ActivityIndicator color={colors.primary} size="small" />
+                  ) : (
+                    <>
+                      <Ionicons
+                        color={habit.completedToday ? colors.success : colors.primary}
+                        name={habit.completedToday ? "refresh-outline" : "checkmark-circle-outline"}
+                        size={16}
+                      />
+                      <Text
+                        color={habit.completedToday ? "success" : "primary"}
+                        style={styles.completeText}
+                        variant="label"
+                      >
+                        {habit.completedToday ? "Undo" : "Complete"}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+
                 <SecondaryButton
                   label="Edit"
                   onPress={() =>
@@ -404,11 +522,52 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 8,
   },
+  statusChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: radii.pill,
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 8,
+  },
+  statusChipDone: {
+    backgroundColor: "#EAFBF0",
+  },
+  statusChipToday: {
+    backgroundColor: "#EAF2FF",
+  },
   actionsRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing.sm,
+  },
+  completeButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#CFE0FF",
+    backgroundColor: "#F8FBFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  completeButtonDone: {
+    borderColor: "#BEE8CC",
+    backgroundColor: "#F1FBF5",
+  },
+  completeButtonDisabled: {
+    opacity: 0.55,
+  },
+  completeButtonPressed: {
+    opacity: 0.82,
+  },
+  completeText: {
+    fontWeight: "700",
   },
   editButton: {
     flex: 1,
