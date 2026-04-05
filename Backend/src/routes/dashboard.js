@@ -92,6 +92,8 @@ router.get("/", requireUser, async (req, res) => {
           description: habit.target_value
             ? `Target: ${habit.target_value} ${habit.target_unit ?? "times"}`
             : "Daily goal",
+          targetValue: Number(habit.target_value ?? 1),
+          targetUnit: habit.target_unit ?? "times",
           frequencyType: habit.frequency_type ?? "daily",
           frequencyDays: toFrequencyDayKeys(habit.frequency_days ?? []),
           color: "#3B82F6",

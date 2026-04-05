@@ -23,6 +23,7 @@ import {
   getFrequencyLabel,
   getLifeAreaLabel,
 } from "@/src/utils/onboarding";
+import { isTimeBasedHabitUnit } from "@/src/utils/habitTimer";
 
 const orderedDays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const dayLabels = {
@@ -123,6 +124,22 @@ function getMissionRoute(router, missionId) {
     pathname: "/habit-edit",
     params: { habitId: missionId },
   });
+}
+
+function openHabitFocusRoute(router, habitId) {
+  router.push({
+    pathname: "/habit-focus",
+    params: { habitId },
+  });
+}
+
+function extractTargetUnitFromCaption(caption) {
+  if (typeof caption !== "string") {
+    return null;
+  }
+
+  const targetMatch = caption.match(/Target:\s*[\d.]+\s+([A-Za-z]+)/i);
+  return targetMatch?.[1] ?? null;
 }
 
 export default function HomeScreen() {
@@ -275,26 +292,36 @@ export default function HomeScreen() {
             : "Guest mode";
 
   let missionItems =
-    dashboardData?.quickActions?.map((action) => ({
-      id: action.id,
-      icon:
-        action.icon === "water"
-          ? "water-outline"
-          : action.icon === "run"
-            ? "walk-outline"
-            : "sparkles-outline",
-      title: action.title,
-      caption: action.description,
-      reward: `+${action.expReward ?? 20} EXP`,
-      actionLabel: action.completedToday
-        ? "Undo completion"
-        : action.isScheduledToday
-          ? "Complete now"
-          : "Open mission",
-      completedToday: action.completedToday,
-      isScheduledToday: action.isScheduledToday,
-      currentStreak: action.currentStreak ?? 0,
-    })) ?? [];
+    dashboardData?.quickActions?.map((action) => {
+      const resolvedTargetUnit =
+        action.targetUnit ?? extractTargetUnitFromCaption(action.description) ?? "times";
+      const isTimeHabit = isTimeBasedHabitUnit(resolvedTargetUnit);
+
+      return {
+        id: action.id,
+        icon:
+          action.icon === "water"
+            ? "water-outline"
+            : action.icon === "run"
+              ? "walk-outline"
+              : "sparkles-outline",
+        title: action.title,
+        caption: action.description,
+        reward: `+${action.expReward ?? 20} EXP`,
+        actionLabel: action.completedToday
+          ? "Undo completion"
+          : action.isScheduledToday
+            ? isTimeHabit
+              ? "Start"
+              : "Complete now"
+            : "Open mission",
+        completedToday: action.completedToday,
+        isScheduledToday: action.isScheduledToday,
+        currentStreak: action.currentStreak ?? 0,
+        targetValue: action.targetValue ?? 1,
+        targetUnit: resolvedTargetUnit,
+      };
+    }) ?? [];
 
   if (!hasAnyHabits) {
     missionItems = [
@@ -338,6 +365,11 @@ export default function HomeScreen() {
       return;
     }
 
+    if (!primaryMission.completedToday && isTimeBasedHabitUnit(primaryMission.targetUnit)) {
+      openHabitFocusRoute(router, primaryMission.id);
+      return;
+    }
+
     setIsUpdatingMission(true);
     setMissionError(null);
 
@@ -368,6 +400,11 @@ export default function HomeScreen() {
 
     if (!mission.isScheduledToday) {
       getMissionRoute(router, mission.id);
+      return;
+    }
+
+    if (!mission.completedToday && isTimeBasedHabitUnit(mission.targetUnit)) {
+      openHabitFocusRoute(router, mission.id);
       return;
     }
 
@@ -591,19 +628,13 @@ export default function HomeScreen() {
                       </View>
 
                       <Pressable
-                        disabled={
-                          updatingHabitId === mission.id ||
-                          !mission.isScheduledToday
-                        }
+                        disabled={updatingHabitId === mission.id}
                         onPress={() => void handleHabitCardAction(mission)}
                         style={({ pressed }) => [
                           styles.questActionButton,
                           mission.completedToday && styles.questActionButtonDone,
-                          !mission.isScheduledToday &&
-                            styles.questActionButtonDisabled,
                           pressed &&
                             updatingHabitId !== mission.id &&
-                            mission.isScheduledToday &&
                             styles.questActionButtonPressed,
                         ]}
                       >
@@ -618,6 +649,8 @@ export default function HomeScreen() {
                               name={
                                 mission.completedToday
                                   ? "refresh-outline"
+                                  : isTimeBasedHabitUnit(mission.targetUnit)
+                                    ? "timer-outline"
                                   : "checkmark-circle-outline"
                               }
                               size={15}
@@ -630,7 +663,9 @@ export default function HomeScreen() {
                               {mission.completedToday
                                 ? "Undo"
                                 : mission.isScheduledToday
-                                  ? "Complete"
+                                  ? isTimeBasedHabitUnit(mission.targetUnit)
+                                    ? "Start"
+                                    : "Complete"
                                   : "Open"}
                             </Text>
                           </>
@@ -743,6 +778,9 @@ export default function HomeScreen() {
                 name={
                   primaryMission?.completedToday
                     ? "refresh-circle"
+                    : primaryMission?.isScheduledToday &&
+                        isTimeBasedHabitUnit(primaryMission?.targetUnit)
+                      ? "timer-outline"
                     : primaryMission?.isScheduledToday
                       ? "checkmark-circle"
                       : "open-outline"
