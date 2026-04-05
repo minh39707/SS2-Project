@@ -65,6 +65,15 @@ async function loadCharacterProgress(userId) {
   return data;
 }
 
+async function respondWithSerializedUser(res, userRecord, userId, statusCode = 200) {
+  const profile = serializeUserProfile(
+    userRecord,
+    await loadCharacterProgress(userId),
+  );
+
+  return res.status(statusCode).json(profile);
+}
+
 async function ensureAvatarBucket() {
   if (hasEnsuredAvatarBucket) {
     return;
@@ -170,9 +179,7 @@ router.patch('/me', requireUser, async (req, res) => {
       return res.status(400).json({ message: error?.message ?? 'Unable to update profile.' });
     }
 
-    return res.json(
-      serializeUserProfile(updatedUser, await loadCharacterProgress(req.userId)),
-    );
+    return respondWithSerializedUser(res, updatedUser, req.userId);
   } catch (err) {
     console.error('Update user error:', err);
     return res.status(500).json({ message: 'Internal server error.' });
@@ -244,9 +251,7 @@ router.post('/me/avatar-upload', requireUser, async (req, res) => {
       });
     }
 
-    return res.json(
-      serializeUserProfile(updatedUser, await loadCharacterProgress(req.userId)),
-    );
+    return respondWithSerializedUser(res, updatedUser, req.userId);
   } catch (err) {
     console.error('Upload avatar error:', err);
     return res.status(500).json({ message: 'Internal server error.' });

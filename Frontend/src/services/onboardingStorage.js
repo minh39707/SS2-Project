@@ -23,7 +23,7 @@ async function readEnvelope() {
   }
 
   pendingEnvelopeRead = (async () => {
-  const rawValue = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
+    const rawValue = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
 
     if (rawValue) {
       cachedEnvelope = JSON.parse(rawValue);

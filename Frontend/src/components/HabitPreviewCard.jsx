@@ -1,4 +1,4 @@
-﻿import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, View } from 'react-native';
 import Card from '@/src/components/ui/Card';
 import { Text } from '@/src/components/ui/Text';

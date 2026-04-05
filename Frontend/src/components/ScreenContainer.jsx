@@ -1,4 +1,4 @@
-﻿import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View, } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View, } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '@/src/constants/colors';
 import { spacing } from '@/src/constants/theme';

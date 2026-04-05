@@ -1,4 +1,4 @@
-﻿import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { colors } from '@/src/constants/colors';
 import { radii, shadows } from '@/src/constants/theme';
 export default function Card({ children, style }) {

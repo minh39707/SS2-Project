@@ -5,6 +5,10 @@ import {
   signOutFromSupabase,
 } from "@/src/services/supabaseAuth";
 
+function signInWithProvider(provider) {
+  return signInWithOAuth(provider);
+}
+
 export async function saveHabitToServer(userId, data, authToken) {
   return apiRequest("/onboarding/sync", {
     method: "POST",
@@ -15,15 +19,15 @@ export async function saveHabitToServer(userId, data, authToken) {
 }
 
 export async function signInWithGoogle() {
-  return signInWithOAuth("google");
+  return signInWithProvider("google");
 }
 
 export async function signInWithFacebook() {
-  return signInWithOAuth("facebook");
+  return signInWithProvider("facebook");
 }
 
 export async function signInWithGitHub() {
-  return signInWithOAuth("github");
+  return signInWithProvider("github");
 }
 
 export async function completeOAuthRedirect(redirectUrl) {

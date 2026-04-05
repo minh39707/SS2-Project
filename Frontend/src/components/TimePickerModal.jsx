@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { Text } from '@/src/components/ui/Text';
 import { colors } from '@/src/constants/colors';
-import { radii, spacing } from '@/src/constants/theme';
+import { spacing } from '@/src/constants/theme';
 import PrimaryButton from '@/src/components/PrimaryButton';
 import SecondaryButton from '@/src/components/SecondaryButton';
 import WheelPicker from '@/src/components/WheelPicker';

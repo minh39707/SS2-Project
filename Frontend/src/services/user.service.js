@@ -17,6 +17,24 @@ function getUserStatsCacheKey(userId) {
   return `user-stats:${userId ?? "guest"}`;
 }
 
+async function loadUserServiceContext() {
+  const persistedState = await loadOnboardingState();
+  const userProfile = persistedState?.userProfile ?? null;
+
+  return {
+    persistedState,
+    userProfile,
+  };
+}
+
+function setCurrentUserCache(userId, profile) {
+  return setCachedResource(
+    getCurrentUserCacheKey(userId),
+    profile,
+    USER_PROFILE_CACHE_TTL_MS,
+  );
+}
+
 function buildFallbackProfile(name, completed, avatarUrl = null) {
   return {
     id: null,
@@ -54,8 +72,7 @@ function buildFallbackStats(completed) {
 }
 
 export async function getCurrentUser(options = {}) {
-  const persistedState = await loadOnboardingState();
-  const userProfile = persistedState?.userProfile ?? null;
+  const { persistedState, userProfile } = await loadUserServiceContext();
   const cacheKey = getCurrentUserCacheKey(userProfile?.id);
 
   if (!userProfile?.id) {
@@ -99,8 +116,7 @@ export async function getCurrentUser(options = {}) {
 }
 
 export async function updateCurrentUserAvatar(avatarUrl) {
-  const persistedState = await loadOnboardingState();
-  const userProfile = persistedState?.userProfile ?? null;
+  const { userProfile } = await loadUserServiceContext();
 
   if (!userProfile?.id) {
     throw new Error("Please sign in before changing your avatar.");
@@ -115,18 +131,13 @@ export async function updateCurrentUserAvatar(avatarUrl) {
     },
   });
 
-  setCachedResource(
-    getCurrentUserCacheKey(userProfile.id),
-    updatedProfile,
-    USER_PROFILE_CACHE_TTL_MS,
-  );
+  setCurrentUserCache(userProfile.id, updatedProfile);
 
   return updatedProfile;
 }
 
 export async function uploadCurrentUserAvatar({ contentType, imageBase64 }) {
-  const persistedState = await loadOnboardingState();
-  const userProfile = persistedState?.userProfile ?? null;
+  const { userProfile } = await loadUserServiceContext();
 
   if (!userProfile?.id) {
     throw new Error("Please sign in before uploading an avatar.");
@@ -143,18 +154,13 @@ export async function uploadCurrentUserAvatar({ contentType, imageBase64 }) {
     },
   });
 
-  setCachedResource(
-    getCurrentUserCacheKey(userProfile.id),
-    updatedProfile,
-    USER_PROFILE_CACHE_TTL_MS,
-  );
+  setCurrentUserCache(userProfile.id, updatedProfile);
 
   return updatedProfile;
 }
 
 export async function getUserStats(options = {}) {
-  const persistedState = await loadOnboardingState();
-  const userProfile = persistedState?.userProfile ?? null;
+  const { persistedState, userProfile } = await loadUserServiceContext();
   const cacheKey = getUserStatsCacheKey(userProfile?.id);
 
   if (!userProfile?.id) {

@@ -1,4 +1,4 @@
-﻿import { Link } from 'expo-router';
+import { Link } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 import Card from '@/src/components/ui/Card';
 import { Text } from '@/src/components/ui/Text';

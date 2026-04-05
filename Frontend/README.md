@@ -55,7 +55,7 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 Notes:
 - `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` are required.
 - The app resolves the backend base URL from the Expo host for local LAN development, so `EXPO_PUBLIC_API_URL` is optional and should usually be left unset in Expo Go.
-- Optional overrides:
+- Optional overrides for a fixed local backend:
 
 ```env
 # Exact backend URL override
@@ -108,6 +108,12 @@ Default backend URL assumptions in the app:
 - Android emulator: `http://10.0.2.2:4000/api`
 - iOS simulator / local web: `http://localhost:4000/api`
 
+Recommended startup order:
+
+1. Start the backend
+2. Start the frontend
+3. If you change `.env` or `.env.local`, restart Expo with `npx expo start -c`
+
 Recommended setup for multiple devices on the same Wi-Fi:
 - Run `npm run start:lan` to auto-detect your current LAN IP and write it to `.env.local`.
 - This generated `.env.local` is ignored by git, so each developer or machine can keep its own network config.
@@ -127,31 +133,15 @@ Or, if Expo is already running:
 npm run configure:lan
 ```
 
-## OAuth Setup Notes
+## Supabase Auth URL Configuration
 
-For Google, Facebook, and GitHub login to work:
-
-1. Enable the provider in Supabase Auth.
-2. Configure the provider credentials in Supabase.
-3. Add mobile redirect URLs in Supabase Auth URL Configuration.
-
-Typical redirect URL during Expo Go development:
+This app uses the Expo scheme `project`, so in Supabase Auth > URL Configuration set:
 
 ```txt
-exp://<your-local-ip>:8081/--/auth-callback
+Site URL: project://auth-callback
 ```
 
-Typical wildcard allow-list entry:
-
-```txt
-exp://**/--/auth-callback
-```
-
-The app also supports a custom callback route:
-
-```txt
-project://auth-callback
-```
+That is the base mobile callback this app expects when handling OAuth.
 
 ## Current App Behavior
 
@@ -170,7 +160,7 @@ If OAuth seems stuck or returns to the wrong place:
 
 - make sure the backend is running
 - confirm `.env` has valid Supabase values
-- confirm Supabase redirect URLs match the current Expo URL
+- confirm Supabase `Site URL` is `project://auth-callback`
 - restart Metro with cache clear:
 
 ```bash

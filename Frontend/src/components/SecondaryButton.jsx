@@ -1,4 +1,4 @@
-﻿import * as Haptics from 'expo-haptics';
+import * as Haptics from 'expo-haptics';
 import { Pressable, StyleSheet } from 'react-native';
 import { Text } from '@/src/components/ui/Text';
 import { spacing } from '@/src/constants/theme';

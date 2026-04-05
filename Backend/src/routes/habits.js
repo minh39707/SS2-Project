@@ -21,6 +21,9 @@ const DEFAULT_REMINDER_BY_TIME = {
   afternoon: "13:00",
   evening: "20:00",
 };
+const HABIT_LOG_SELECT_FIELDS =
+  "log_id, habit_id, log_date, status, hp_change, exp_change, streak_at_log";
+const HABIT_NOT_FOUND_MESSAGE = "Habit not found.";
 const CATEGORY_CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedCategoryMap = null;
 let cachedCategoryMapExpiresAt = 0;
@@ -43,6 +46,15 @@ function getDefaultReminder(preferredTime) {
 
 function getDefaultStartDate(createdAt) {
   return (createdAt ?? new Date().toISOString()).split("T")[0];
+}
+
+function buildDefaultHabitMetadata(createdAt, preferredTime = "morning") {
+  return {
+    categoryLabel: null,
+    preferredTime,
+    startDate: getDefaultStartDate(createdAt),
+    reminders: [getDefaultReminder(preferredTime)],
+  };
 }
 
 function parseFormDescription(description, createdAt) {
@@ -81,12 +93,7 @@ function parseOnboardingDescription(description, createdAt) {
 
 function extractHabitMetadata(description, createdAt) {
   if (typeof description !== "string") {
-    return {
-      categoryLabel: null,
-      preferredTime: "morning",
-      startDate: getDefaultStartDate(createdAt),
-      reminders: [getDefaultReminder("morning")],
-    };
+    return buildDefaultHabitMetadata(createdAt);
   }
 
   if (description.startsWith("Created from mobile habit form.")) {
@@ -97,12 +104,7 @@ function extractHabitMetadata(description, createdAt) {
     return parseOnboardingDescription(description, createdAt);
   }
 
-  return {
-    categoryLabel: null,
-    preferredTime: "morning",
-    startDate: getDefaultStartDate(createdAt),
-    reminders: [getDefaultReminder("morning")],
-  };
+  return buildDefaultHabitMetadata(createdAt);
 }
 
 async function loadCategoryMap() {
@@ -224,6 +226,42 @@ function validatePayload(payload) {
   return null;
 }
 
+function buildHabitMutationPayload(payload, categoryId, options = {}) {
+  const {
+    userId = null,
+    includeInsertDefaults = false,
+    includeUpdatedAt = false,
+  } = options;
+  const habitPayload = {
+    category_id: categoryId,
+    title: payload.trimmedTitle,
+    description: buildDescription(payload),
+    habit_type: payload.habitType,
+    target_value: payload.normalizedTargetValue,
+    target_unit: payload.targetUnit,
+    frequency_type: payload.normalizedFrequencyType,
+    frequency_days: payload.normalizedDays,
+  };
+
+  if (includeInsertDefaults) {
+    Object.assign(habitPayload, {
+      user_id: userId,
+      tracking_method: "boolean",
+      hp_reward: 10,
+      exp_reward: 20,
+      hp_penalty: 15,
+      streak_bonus_exp: 5,
+      is_active: true,
+    });
+  }
+
+  if (includeUpdatedAt) {
+    habitPayload.updated_at = new Date().toISOString();
+  }
+
+  return habitPayload;
+}
+
 function serializeHabit(habit, categoryMap, progress = {}) {
   const metadata = extractHabitMetadata(habit.description, habit.created_at);
 
@@ -271,7 +309,7 @@ async function fetchHabitById(habitId, userId) {
 async function fetchHabitLogs(userId, habitId = null) {
   let query = supabase
     .from("habit_logs")
-    .select("log_id, habit_id, log_date, status, hp_change, exp_change, streak_at_log")
+    .select(HABIT_LOG_SELECT_FIELDS)
     .eq("user_id", userId);
 
   if (habitId) {
@@ -290,7 +328,7 @@ async function fetchHabitLogs(userId, habitId = null) {
 async function fetchTodayHabitLog(userId, habitId, dateKey) {
   const { data, error } = await supabase
     .from("habit_logs")
-    .select("log_id, habit_id, log_date, status, hp_change, exp_change, streak_at_log")
+    .select(HABIT_LOG_SELECT_FIELDS)
     .eq("user_id", userId)
     .eq("habit_id", habitId)
     .eq("log_date", dateKey)
@@ -301,6 +339,58 @@ async function fetchTodayHabitLog(userId, habitId, dateKey) {
   }
 
   return data;
+}
+
+async function fetchHabitCompletionContext(userId, habitId, dateKey) {
+  const [categoryMap, habit, character, existingLogs, todayLog] = await Promise.all([
+    loadCategoryMap(),
+    fetchHabitById(habitId, userId),
+    fetchCharacter(userId),
+    fetchHabitLogs(userId, habitId),
+    fetchTodayHabitLog(userId, habitId, dateKey),
+  ]);
+
+  return {
+    categoryMap,
+    habit,
+    character,
+    existingLogs,
+    todayLog,
+  };
+}
+
+function getCompletedDateKeys(logs = [], excludedLogId = null) {
+  return logs
+    .filter(
+      (log) =>
+        log.log_id !== excludedLogId &&
+        (!log.status || log.status === "completed"),
+    )
+    .map((log) => log.log_date);
+}
+
+function buildProgressResponse(habit, categoryMap, progress, rewards = { exp: 0, hp: 0 }) {
+  return {
+    habit: serializeHabit(habit, categoryMap, progress),
+    rewards,
+  };
+}
+
+function buildCurrentProgressResponse(
+  habit,
+  categoryMap,
+  existingLogs,
+  todayDateKey,
+  rewards = { exp: 0, hp: 0 },
+) {
+  const progressMap = buildHabitProgressMap([habit], existingLogs, todayDateKey);
+
+  return buildProgressResponse(
+    habit,
+    categoryMap,
+    progressMap.get(habit.habit_id),
+    rewards,
+  );
 }
 
 async function fetchCharacter(userId) {
@@ -410,7 +500,7 @@ router.get("/:habitId", requireUser, async (req, res) => {
     ]);
 
     if (!habit) {
-      return res.status(404).json({ message: "Habit not found." });
+      return res.status(404).json({ message: HABIT_NOT_FOUND_MESSAGE });
     }
 
     const progressMap = buildHabitProgressMap([habit], logs);
@@ -427,16 +517,15 @@ router.get("/:habitId", requireUser, async (req, res) => {
 router.post("/:habitId/complete", requireUser, async (req, res) => {
   try {
     const todayDateKey = toDateKey();
-    const [categoryMap, habit, character, existingLogs, todayLog] = await Promise.all([
-      loadCategoryMap(),
-      fetchHabitById(req.params.habitId, req.userId),
-      fetchCharacter(req.userId),
-      fetchHabitLogs(req.userId, req.params.habitId),
-      fetchTodayHabitLog(req.userId, req.params.habitId, todayDateKey),
-    ]);
+    const { categoryMap, habit, character, existingLogs, todayLog } =
+      await fetchHabitCompletionContext(
+        req.userId,
+        req.params.habitId,
+        todayDateKey,
+      );
 
     if (!habit) {
-      return res.status(404).json({ message: "Habit not found." });
+      return res.status(404).json({ message: HABIT_NOT_FOUND_MESSAGE });
     }
 
     if (!isHabitScheduledOnDate(habit, todayDateKey)) {
@@ -446,16 +535,12 @@ router.post("/:habitId/complete", requireUser, async (req, res) => {
     }
 
     if (todayLog && (!todayLog.status || todayLog.status === "completed")) {
-      const progressMap = buildHabitProgressMap([habit], existingLogs, todayDateKey);
-      return res.json({
-        habit: serializeHabit(habit, categoryMap, progressMap.get(habit.habit_id)),
-        rewards: { exp: 0, hp: 0 },
-      });
+      return res.json(
+        buildCurrentProgressResponse(habit, categoryMap, existingLogs, todayDateKey),
+      );
     }
 
-    const completedDateKeys = existingLogs
-      .filter((log) => !log.status || log.status === "completed")
-      .map((log) => log.log_date);
+    const completedDateKeys = getCompletedDateKeys(existingLogs);
     const nextStreak = calculateHabitStreak(
       habit,
       [...completedDateKeys, todayDateKey],
@@ -496,20 +581,19 @@ router.post("/:habitId/complete", requireUser, async (req, res) => {
       ),
     ]);
 
-    return res.json({
-      habit: serializeHabit(habit, categoryMap, {
+    return res.json(
+      buildProgressResponse(habit, categoryMap, {
         completedToday: true,
         currentStreak: nextStreak.currentStreak,
         bestStreak: nextStreak.bestStreak,
         lastCompletedAt: nextStreak.lastCompletedAt,
         isScheduledToday: true,
-      }),
-      rewards: {
+      }, {
         exp: expChange,
         hp: hpChange,
         logId: createdLog?.log_id ?? null,
-      },
-    });
+      }),
+    );
   } catch (error) {
     console.error("Complete habit error:", error);
     return res.status(500).json({ message: "Internal server error." });
@@ -519,24 +603,21 @@ router.post("/:habitId/complete", requireUser, async (req, res) => {
 router.delete("/:habitId/complete", requireUser, async (req, res) => {
   try {
     const todayDateKey = toDateKey();
-    const [categoryMap, habit, character, existingLogs, todayLog] = await Promise.all([
-      loadCategoryMap(),
-      fetchHabitById(req.params.habitId, req.userId),
-      fetchCharacter(req.userId),
-      fetchHabitLogs(req.userId, req.params.habitId),
-      fetchTodayHabitLog(req.userId, req.params.habitId, todayDateKey),
-    ]);
+    const { categoryMap, habit, character, existingLogs, todayLog } =
+      await fetchHabitCompletionContext(
+        req.userId,
+        req.params.habitId,
+        todayDateKey,
+      );
 
     if (!habit) {
-      return res.status(404).json({ message: "Habit not found." });
+      return res.status(404).json({ message: HABIT_NOT_FOUND_MESSAGE });
     }
 
     if (!todayLog || (todayLog.status && todayLog.status !== "completed")) {
-      const progressMap = buildHabitProgressMap([habit], existingLogs, todayDateKey);
-      return res.json({
-        habit: serializeHabit(habit, categoryMap, progressMap.get(habit.habit_id)),
-        rewards: { exp: 0, hp: 0 },
-      });
+      return res.json(
+        buildCurrentProgressResponse(habit, categoryMap, existingLogs, todayDateKey),
+      );
     }
 
     const { error: deleteLogError } = await supabase
@@ -549,13 +630,7 @@ router.delete("/:habitId/complete", requireUser, async (req, res) => {
       return res.status(400).json({ message: deleteLogError.message });
     }
 
-    const remainingDateKeys = existingLogs
-      .filter(
-        (log) =>
-          log.log_id !== todayLog.log_id &&
-          (!log.status || log.status === "completed"),
-      )
-      .map((log) => log.log_date);
+    const remainingDateKeys = getCompletedDateKeys(existingLogs, todayLog.log_id);
     const nextStreak = calculateHabitStreak(habit, remainingDateKeys, todayDateKey);
 
     await Promise.all([
@@ -571,19 +646,18 @@ router.delete("/:habitId/complete", requireUser, async (req, res) => {
       ),
     ]);
 
-    return res.json({
-      habit: serializeHabit(habit, categoryMap, {
+    return res.json(
+      buildProgressResponse(habit, categoryMap, {
         completedToday: false,
         currentStreak: nextStreak.currentStreak,
         bestStreak: nextStreak.bestStreak,
         lastCompletedAt: nextStreak.lastCompletedAt,
         isScheduledToday: isHabitScheduledOnDate(habit, todayDateKey),
-      }),
-      rewards: {
+      }, {
         exp: -(todayLog.exp_change ?? 0),
         hp: -(todayLog.hp_change ?? 0),
-      },
-    });
+      }),
+    );
   } catch (error) {
     console.error("Undo complete habit error:", error);
     return res.status(500).json({ message: "Internal server error." });
@@ -600,24 +674,10 @@ router.post("/", requireUser, async (req, res) => {
     }
 
     const categoryId = await resolveCategoryId(payload.categoryLabel);
-
-    const habitPayload = {
-      user_id: req.userId,
-      category_id: categoryId,
-      title: payload.trimmedTitle,
-      description: buildDescription(payload),
-      habit_type: payload.habitType,
-      tracking_method: "boolean",
-      target_value: payload.normalizedTargetValue,
-      target_unit: payload.targetUnit,
-      frequency_type: payload.normalizedFrequencyType,
-      frequency_days: payload.normalizedDays,
-      hp_reward: 10,
-      exp_reward: 20,
-      hp_penalty: 15,
-      streak_bonus_exp: 5,
-      is_active: true,
-    };
+    const habitPayload = buildHabitMutationPayload(payload, categoryId, {
+      userId: req.userId,
+      includeInsertDefaults: true,
+    });
 
     const { data, error } = await supabase
       .from("habits")
@@ -644,7 +704,7 @@ router.patch("/:habitId", requireUser, async (req, res) => {
     const existingHabit = await fetchHabitById(req.params.habitId, req.userId);
 
     if (!existingHabit) {
-      return res.status(404).json({ message: "Habit not found." });
+      return res.status(404).json({ message: HABIT_NOT_FOUND_MESSAGE });
     }
 
     const payload = normalizePayload(req.body);
@@ -655,17 +715,9 @@ router.patch("/:habitId", requireUser, async (req, res) => {
     }
 
     const categoryId = await resolveCategoryId(payload.categoryLabel);
-    const habitPayload = {
-      category_id: categoryId,
-      title: payload.trimmedTitle,
-      description: buildDescription(payload),
-      habit_type: payload.habitType,
-      target_value: payload.normalizedTargetValue,
-      target_unit: payload.targetUnit,
-      frequency_type: payload.normalizedFrequencyType,
-      frequency_days: payload.normalizedDays,
-      updated_at: new Date().toISOString(),
-    };
+    const habitPayload = buildHabitMutationPayload(payload, categoryId, {
+      includeUpdatedAt: true,
+    });
 
     const { data, error } = await supabase
       .from("habits")
@@ -694,7 +746,7 @@ router.delete("/:habitId", requireUser, async (req, res) => {
     const existingHabit = await fetchHabitById(req.params.habitId, req.userId);
 
     if (!existingHabit) {
-      return res.status(404).json({ message: "Habit not found." });
+      return res.status(404).json({ message: HABIT_NOT_FOUND_MESSAGE });
     }
 
     const { error } = await supabase

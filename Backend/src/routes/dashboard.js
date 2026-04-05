@@ -49,6 +49,59 @@ function buildMonthLabel() {
   }).format(new Date());
 }
 
+function getDashboardHabitIcon(title) {
+  if (title === "drink_water") {
+    return "water";
+  }
+
+  if (title === "walk") {
+    return "run";
+  }
+
+  return "read";
+}
+
+function buildQuickAction(habit, progress) {
+  return {
+    id: habit.habit_id,
+    title: habit.title,
+    description: habit.target_value
+      ? `Target: ${habit.target_value} ${habit.target_unit ?? "times"}`
+      : "Daily goal",
+    targetValue: Number(habit.target_value ?? 1),
+    targetUnit: habit.target_unit ?? "times",
+    frequencyType: habit.frequency_type ?? "daily",
+    frequencyDays: toFrequencyDayKeys(habit.frequency_days ?? []),
+    color: "#3B82F6",
+    tintColor: "#EDF5FF",
+    icon: getDashboardHabitIcon(habit.title),
+    completedToday: progress?.completedToday ?? false,
+    currentStreak: progress?.currentStreak ?? 0,
+    bestStreak: progress?.bestStreak ?? 0,
+    isScheduledToday: progress?.isScheduledToday ?? false,
+    expReward: Number(habit.exp_reward ?? 0),
+    streakBonusExp: Number(habit.streak_bonus_exp ?? 0),
+  };
+}
+
+function buildGoodHabit(habit, progress) {
+  return {
+    id: habit.habit_id,
+    title: habit.title,
+    progressLabel: progress?.completedToday
+      ? "Completed today"
+      : progress?.isScheduledToday
+        ? "Due today"
+        : habit.frequency_type ?? "daily",
+    actionLabel: progress?.completedToday ? "Done" : "Ready today",
+    icon: "book",
+    iconColor: "#3B82F6",
+    iconBackground: "#EEF5FF",
+    actionTone: progress?.completedToday ? "success" : "primary",
+    currentStreak: progress?.currentStreak ?? 0,
+  };
+}
+
 // GET /api/dashboard
 router.get("/", requireUser, async (req, res) => {
   try {
@@ -85,32 +138,7 @@ router.get("/", requireUser, async (req, res) => {
     const quickActions = normalizedHabits
       .map((habit) => {
         const progress = progressMap.get(habit.habit_id);
-
-        return {
-          id: habit.habit_id,
-          title: habit.title,
-          description: habit.target_value
-            ? `Target: ${habit.target_value} ${habit.target_unit ?? "times"}`
-            : "Daily goal",
-          targetValue: Number(habit.target_value ?? 1),
-          targetUnit: habit.target_unit ?? "times",
-          frequencyType: habit.frequency_type ?? "daily",
-          frequencyDays: toFrequencyDayKeys(habit.frequency_days ?? []),
-          color: "#3B82F6",
-          tintColor: "#EDF5FF",
-          icon:
-            habit.title === "drink_water"
-              ? "water"
-              : habit.title === "walk"
-                ? "run"
-                : "read",
-          completedToday: progress?.completedToday ?? false,
-          currentStreak: progress?.currentStreak ?? 0,
-          bestStreak: progress?.bestStreak ?? 0,
-          isScheduledToday: progress?.isScheduledToday ?? false,
-          expReward: Number(habit.exp_reward ?? 0),
-          streakBonusExp: Number(habit.streak_bonus_exp ?? 0),
-        };
+        return buildQuickAction(habit, progress);
       })
       .sort((leftHabit, rightHabit) => {
         const leftRank =
@@ -122,25 +150,9 @@ router.get("/", requireUser, async (req, res) => {
       });
 
     // Good habits list
-    const goodHabits = normalizedHabits.map((habit) => {
-      const progress = progressMap.get(habit.habit_id);
-
-      return {
-        id: habit.habit_id,
-        title: habit.title,
-        progressLabel: progress?.completedToday
-          ? "Completed today"
-          : progress?.isScheduledToday
-            ? "Due today"
-            : habit.frequency_type ?? "daily",
-        actionLabel: progress?.completedToday ? "Done" : "Ready today",
-        icon: "book",
-        iconColor: "#3B82F6",
-        iconBackground: "#EEF5FF",
-        actionTone: progress?.completedToday ? "success" : "primary",
-        currentStreak: progress?.currentStreak ?? 0,
-      };
-    });
+    const goodHabits = normalizedHabits.map((habit) =>
+      buildGoodHabit(habit, progressMap.get(habit.habit_id)),
+    );
 
     return res.json({
       todayProgress: todayProgress.ratio,

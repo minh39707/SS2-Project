@@ -25,7 +25,12 @@ import {
   uncompleteHabit,
 } from "@/src/services/habit.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
-import { isTimeBasedHabitUnit } from "@/src/utils/habitTimer";
+import {
+  getHabitActionIcon,
+  getHabitActionLabel,
+  openHabitFocusRoute,
+  shouldOpenHabitFocus,
+} from "@/src/utils/habitActions";
 import { formatTimeLabel } from "@/src/utils/onboarding";
 
 function getFrequencyLabel(habit) {
@@ -50,13 +55,6 @@ function getReminderLabel(habit) {
   return habit.reminders?.[0]
     ? formatTimeLabel(habit.reminders[0])
     : "No reminder";
-}
-
-function openHabitFocusRoute(router, habitId) {
-  router.push({
-    pathname: "/habit-focus",
-    params: { habitId },
-  });
 }
 
 export default function ManageHabitsScreen() {
@@ -156,7 +154,7 @@ export default function ManageHabitsScreen() {
   };
 
   const handleToggleComplete = async (habit) => {
-    if (!habit.completedToday && isTimeBasedHabitUnit(habit.targetUnit)) {
+    if (shouldOpenHabitFocus(habit)) {
       openHabitFocusRoute(router, habit.id);
       return;
     }
@@ -392,13 +390,7 @@ export default function ManageHabitsScreen() {
                     <>
                       <Ionicons
                         color={habit.completedToday ? colors.success : colors.primary}
-                        name={
-                          habit.completedToday
-                            ? "refresh-outline"
-                            : isTimeBasedHabitUnit(habit.targetUnit)
-                              ? "timer-outline"
-                              : "checkmark-circle-outline"
-                        }
+                        name={getHabitActionIcon(habit)}
                         size={16}
                       />
                       <Text
@@ -406,11 +398,7 @@ export default function ManageHabitsScreen() {
                         style={styles.completeText}
                         variant="label"
                       >
-                        {habit.completedToday
-                          ? "Undo"
-                          : isTimeBasedHabitUnit(habit.targetUnit)
-                            ? "Start"
-                            : "Complete"}
+                        {getHabitActionLabel(habit)}
                       </Text>
                     </>
                   )}

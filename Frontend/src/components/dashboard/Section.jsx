@@ -1,4 +1,4 @@
-﻿import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import Button from '@/src/components/ui/Button';
 import { Text } from '@/src/components/ui/Text';
 import { spacing } from '@/src/constants/theme';

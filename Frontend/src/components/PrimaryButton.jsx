@@ -1,4 +1,4 @@
-﻿import * as Haptics from 'expo-haptics';
+import * as Haptics from 'expo-haptics';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { Text } from '@/src/components/ui/Text';
 import { colors } from '@/src/constants/colors';

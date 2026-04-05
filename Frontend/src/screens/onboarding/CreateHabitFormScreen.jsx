@@ -17,9 +17,7 @@ import { colors } from '@/src/constants/colors';
 import { radii, spacing } from '@/src/constants/theme';
 import { useOnboarding } from '@/src/store/OnboardingContext';
 import TimePickerModal from '@/src/components/TimePickerModal';
-import { formatTimeLabel, fromTimePickerParts } from '@/src/utils/onboarding';
-
-const REPEAT_OPTIONS = ['Everyday', 'Weekdays', 'Weekends', 'Custom'];
+import { formatTimeLabel } from '@/src/utils/onboarding';
 const SHOW_ON_OPTIONS = ['Morning', 'Afternoon', 'Evening'];
 
 export default function CreateHabitFormScreen() {
@@ -31,8 +29,8 @@ export default function CreateHabitFormScreen() {
   const isGoodHabit = habitCategory === 'good';
 
   const [name, setName] = useState('');
-  const [repeat, setRepeat] = useState('Everyday');
-  const [timesPerDay, setTimesPerDay] = useState(1);
+  const [repeat] = useState('Everyday');
+  const [timesPerDay] = useState(1);
   const [reminders, setReminders] = useState(['09:00']);
   const [showOn, setShowOn] = useState({ Morning: true, Afternoon: true, Evening: true });
   const [showTimePicker, setShowTimePicker] = useState(false);

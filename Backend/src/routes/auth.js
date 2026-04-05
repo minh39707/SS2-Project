@@ -2,6 +2,16 @@ const express = require("express");
 const { supabase } = require("../supabase");
 
 const router = express.Router();
+const DEFAULT_CHARACTER_CLASS = "Novice";
+const DEFAULT_CHARACTER_STATS = {
+  level: 1,
+  current_hp: 100,
+  max_hp: 100,
+  current_exp: 0,
+  exp_to_next_level: 100,
+  power: 10,
+  gold_coins: 0,
+};
 
 function getProviderAvatarUrl(userMetadata = {}) {
   return (
@@ -52,6 +62,24 @@ async function buildUniqueUsername(baseValue, excludeUserId = null) {
   return `${fallbackBase}_${Date.now().toString().slice(-6)}`;
 }
 
+function buildUserResponse(user, profile = null, fallbackName = null) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: profile?.username ?? fallbackName ?? user.email?.split("@")[0] ?? "Player",
+    avatarUrl: profile?.avatar_url ?? null,
+  };
+}
+
+function buildStarterCharacter(userId, name) {
+  return {
+    user_id: userId,
+    name,
+    class: DEFAULT_CHARACTER_CLASS,
+    ...DEFAULT_CHARACTER_STATS,
+  };
+}
+
 // POST /api/auth/email/sign-up
 router.post("/email/sign-up", async (req, res) => {
   try {
@@ -85,25 +113,11 @@ router.post("/email/sign-up", async (req, res) => {
 
     // Create RPG character to initialize user level/hp
     await supabase.from("characters").insert({
-      user_id: data.user.id,
-      name: displayName,
-      class: "Novice",
-      level: 1,
-      current_hp: 100,
-      max_hp: 100,
-      current_exp: 0,
-      exp_to_next_level: 100,
-      power: 10,
-      gold_coins: 0,
+      ...buildStarterCharacter(data.user.id, displayName),
     });
 
     return res.json({
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        name: displayName,
-        avatarUrl: null,
-      },
+      user: buildUserResponse(data.user, null, displayName),
     });
   } catch (err) {
     console.error("Sign-up error:", err);
@@ -139,12 +153,7 @@ router.post("/email/sign-in", async (req, res) => {
       .single();
 
     return res.json({
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        name: profile?.username ?? email.split("@")[0],
-        avatarUrl: profile?.avatar_url ?? null,
-      },
+      user: buildUserResponse(data.user, profile),
       token: data.session.access_token,
       refresh_token: data.session.refresh_token,
     });
@@ -270,18 +279,9 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
 
     if (!character) {
       // Create RPG character if it doesn't exist
-      const { error: insertError } = await supabase.from("characters").insert({
-        user_id: userId,
-        name: displayName,
-        class: "Novice",
-        level: 1,
-        current_hp: 100,
-        max_hp: 100,
-        current_exp: 0,
-        exp_to_next_level: 100,
-        power: 10,
-        gold_coins: 0,
-      });
+      const { error: insertError } = await supabase
+        .from("characters")
+        .insert(buildStarterCharacter(userId, displayName));
 
       if (insertError) {
         console.error("OAuth sync character creation error:", insertError);
@@ -293,12 +293,11 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
 
     return res.json({
       message: "Sync successful",
-      user: {
-        id: userId,
-        email: userEmail,
-        name: profile?.username ?? displayName,
-        avatarUrl: profile?.avatar_url ?? null,
-      },
+      user: buildUserResponse(
+        { id: userId, email: userEmail },
+        profile,
+        displayName,
+      ),
     });
   } catch (err) {
     console.error("OAuth sync error:", err);

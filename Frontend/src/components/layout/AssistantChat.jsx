@@ -1,9 +1,11 @@
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -30,6 +32,52 @@ const defaultQuickPrompts = [
   "Suggest an easier version",
   "Plan tonight's routine",
 ];
+const chatGptSegmentRotations = [
+  "0deg",
+  "60deg",
+  "120deg",
+  "180deg",
+  "240deg",
+  "300deg",
+];
+
+function ChatGptGlyph({ size = 22, color = colors.surface, accentColor = colors.primary }) {
+  const segmentWidth = Math.max(7, Math.round(size * 0.42));
+  const segmentHeight = Math.max(11, Math.round(size * 0.24));
+  const offset = Math.max(5, Math.round(size * 0.24));
+  const coreSize = Math.max(6, Math.round(size * 0.28));
+
+  return (
+    <View style={[styles.glyphWrap, { width: size, height: size }]}>
+      {chatGptSegmentRotations.map((rotation) => (
+        <View
+          key={rotation}
+          style={[
+            styles.glyphSegment,
+            {
+              width: segmentWidth,
+              height: segmentHeight,
+              backgroundColor: color,
+              borderRadius: segmentHeight / 2,
+              transform: [{ rotate: rotation }, { translateY: -offset }],
+            },
+          ]}
+        />
+      ))}
+      <View
+        style={[
+          styles.glyphCore,
+          {
+            width: coreSize,
+            height: coreSize,
+            borderRadius: coreSize / 2,
+            backgroundColor: accentColor,
+          },
+        ]}
+      />
+    </View>
+  );
+}
 
 function normalizeText(value) {
   return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -76,12 +124,40 @@ export default function AssistantChat({
   quickPrompts = defaultQuickPrompts,
 }) {
   const insets = useSafeAreaInsets();
-  const { height } = useWindowDimensions();
+  const { height, width } = useWindowDimensions();
   const [isOpen, setIsOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState(starterMessages);
   const chatHeight = Math.min(height * 0.58, 460);
-  const bubbleBottom = Math.max(insets.bottom + 116, 132);
+  const bubbleWidth = 58;
+  const bubbleHeight = 58;
+  const bubbleMargin = spacing.md;
+  const bubbleBottom = Math.max(insets.bottom + 108, 124);
+  const minBubbleX = bubbleMargin;
+  const maxBubbleX = Math.max(bubbleMargin, width - bubbleWidth - bubbleMargin);
+  const minBubbleY = Math.max(insets.top + 86, bubbleMargin + 12);
+  const maxBubbleY = Math.max(
+    minBubbleY,
+    height - bubbleBottom - bubbleHeight,
+  );
+  const defaultBubblePosition = {
+    x: maxBubbleX,
+    y: maxBubbleY,
+  };
+  const bubblePosition = useRef(
+    new Animated.ValueXY(defaultBubblePosition),
+  ).current;
+  const bubbleOffsetRef = useRef(defaultBubblePosition);
+  const dragStartRef = useRef(defaultBubblePosition);
+
+  const clampBubbleX = useCallback(
+    (value) => Math.max(minBubbleX, Math.min(maxBubbleX, value)),
+    [maxBubbleX, minBubbleX],
+  );
+  const clampBubbleY = useCallback(
+    (value) => Math.max(minBubbleY, Math.min(maxBubbleY, value)),
+    [maxBubbleY, minBubbleY],
+  );
 
   const openChat = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -113,32 +189,85 @@ export default function AssistantChat({
     setIsOpen(true);
   };
 
+  useEffect(() => {
+    const nextPosition = {
+      x: clampBubbleX(bubbleOffsetRef.current.x),
+      y: clampBubbleY(bubbleOffsetRef.current.y),
+    };
+
+    bubbleOffsetRef.current = nextPosition;
+    bubblePosition.setValue(nextPosition);
+  }, [bubblePosition, clampBubbleX, clampBubbleY, height, width]);
+
+  const bubblePanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dx) > 4 || Math.abs(gestureState.dy) > 4,
+        onPanResponderGrant: () => {
+          bubblePosition.stopAnimation((value) => {
+            bubbleOffsetRef.current = value;
+            dragStartRef.current = value;
+          });
+        },
+        onPanResponderMove: (_, gestureState) => {
+          bubblePosition.setValue({
+            x: clampBubbleX(dragStartRef.current.x + gestureState.dx),
+            y: clampBubbleY(dragStartRef.current.y + gestureState.dy),
+          });
+        },
+        onPanResponderRelease: (_, gestureState) => {
+          const nextPosition = {
+            x: clampBubbleX(dragStartRef.current.x + gestureState.dx),
+            y: clampBubbleY(dragStartRef.current.y + gestureState.dy),
+          };
+
+          bubbleOffsetRef.current = nextPosition;
+          bubblePosition.setValue(nextPosition);
+
+          if (Math.abs(gestureState.dx) < 6 && Math.abs(gestureState.dy) < 6) {
+            openChat();
+          }
+        },
+        onPanResponderTerminate: () => {
+          bubblePosition.setValue(bubbleOffsetRef.current);
+        },
+      }),
+    [bubblePosition, clampBubbleX, clampBubbleY],
+  );
+
   const trigger =
     variant === "floating" ? (
       <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-        <Pressable
-          onPress={openChat}
-          style={({ pressed }) => [
-            styles.bubble,
-            { bottom: bubbleBottom },
-            pressed && styles.bubblePressed,
+        <Animated.View
+          {...bubblePanResponder.panHandlers}
+          style={[
+            styles.bubbleWrap,
+            {
+              width: bubbleWidth,
+              height: bubbleHeight,
+              transform: [
+                { translateX: bubblePosition.x },
+                { translateY: bubblePosition.y },
+              ],
+            },
           ]}
         >
-          <Ionicons
-            color={colors.surface}
-            name="chatbubble-ellipses"
-            size={24}
-          />
-          <Text color="white" style={styles.bubbleLabel} variant="caption">
-            Coach
-          </Text>
-        </Pressable>
+          <View style={styles.bubble}>
+            <ChatGptGlyph accentColor={colors.primary} color={colors.surface} size={24} />
+          </View>
+        </Animated.View>
       </View>
     ) : (
       <View style={styles.inlineCard}>
         <View style={styles.inlineHeader}>
           <View style={styles.inlineIconWrap}>
-            <Ionicons color={colors.primary} name="sparkles-outline" size={18} />
+            <ChatGptGlyph
+              accentColor="#EEF5FF"
+              color={colors.primary}
+              size={18}
+            />
           </View>
           <View style={styles.inlineCopy}>
             <Text variant="subtitle">{title}</Text>
@@ -283,25 +412,28 @@ export default function AssistantChat({
 }
 
 const styles = StyleSheet.create({
-  bubble: {
+  glyphWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  glyphSegment: {
     position: "absolute",
-    right: 8,
-    width: 78,
-    height: 78,
-    borderRadius: 39,
+  },
+  glyphCore: {
+    position: "absolute",
+  },
+  bubbleWrap: {
+    position: "absolute",
+  },
+  bubble: {
+    flex: 1,
+    borderRadius: 29,
     backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
-    gap: 3,
-    borderWidth: 6,
+    borderWidth: 4,
     borderColor: "#EAF1FF",
     ...shadows.card,
-  },
-  bubblePressed: {
-    transform: [{ scale: 0.97 }],
-  },
-  bubbleLabel: {
-    fontWeight: "700",
   },
   inlineCard: {
     backgroundColor: colors.surface,

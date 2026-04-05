@@ -21,6 +21,19 @@ export function normalizeTimeBasedHabitUnit(unit) {
   return TIME_BASED_UNIT_ALIASES[normalizedUnit] ?? null;
 }
 
+export function extractTargetUnitFromCaption(caption) {
+  if (typeof caption !== "string") {
+    return null;
+  }
+
+  const targetMatch = caption.match(/Target:\s*[\d.]+\s+([A-Za-z]+)/i);
+  return targetMatch?.[1] ?? null;
+}
+
+export function resolveHabitTargetUnit(targetUnit, caption) {
+  return targetUnit ?? extractTargetUnitFromCaption(caption) ?? "times";
+}
+
 export function isTimeBasedHabitUnit(unit) {
   return normalizeTimeBasedHabitUnit(unit) !== null;
 }

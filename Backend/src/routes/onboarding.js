@@ -9,6 +9,7 @@ const {
 const router = express.Router();
 
 const ONBOARDING_DESCRIPTION_PREFIX = "Created during onboarding.";
+const ONBOARDING_HABIT_LOOKUP_LIMIT = 20;
 
 function toFrequencyType(frequency) {
   if (frequency === "specific_days") {
@@ -51,6 +52,38 @@ function buildHabitPayload(userId, body) {
   };
 }
 
+async function fetchExistingOnboardingHabits(userId) {
+  const { data, error } = await supabase
+    .from("habits")
+    .select("habit_id")
+    .eq("user_id", userId)
+    .ilike("description", `${ONBOARDING_DESCRIPTION_PREFIX}%`)
+    .order("created_at", { ascending: false })
+    .limit(ONBOARDING_HABIT_LOOKUP_LIMIT);
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
+}
+
+async function deleteDuplicateOnboardingHabits(habits) {
+  if (!habits.length) {
+    return;
+  }
+
+  const duplicateIds = habits.map((habit) => habit.habit_id);
+  const { error } = await supabase
+    .from("habits")
+    .delete()
+    .in("habit_id", duplicateIds);
+
+  if (error) {
+    throw error;
+  }
+}
+
 // POST /api/onboarding/sync
 router.post("/sync", requireUser, async (req, res) => {
   try {
@@ -62,17 +95,11 @@ router.post("/sync", requireUser, async (req, res) => {
     }
 
     const habitPayload = buildHabitPayload(userId, req.body);
+    let existingOnboardingHabits = [];
 
-    const { data: existingOnboardingHabits, error: existingHabitError } =
-      await supabase
-        .from("habits")
-        .select("habit_id")
-        .eq("user_id", userId)
-        .ilike("description", `${ONBOARDING_DESCRIPTION_PREFIX}%`)
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-    if (existingHabitError) {
+    try {
+      existingOnboardingHabits = await fetchExistingOnboardingHabits(userId);
+    } catch (existingHabitError) {
       console.error("Onboarding sync lookup error:", existingHabitError);
       return res.status(400).json({ message: existingHabitError.message });
     }
@@ -95,15 +122,9 @@ router.post("/sync", requireUser, async (req, res) => {
     }
 
     if (duplicateOnboardingHabits.length > 0) {
-      const duplicateIds = duplicateOnboardingHabits.map(
-        (habit) => habit.habit_id,
-      );
-      const { error: deleteError } = await supabase
-        .from("habits")
-        .delete()
-        .in("habit_id", duplicateIds);
-
-      if (deleteError) {
+      try {
+        await deleteDuplicateOnboardingHabits(duplicateOnboardingHabits);
+      } catch (deleteError) {
         console.error("Onboarding cleanup error:", deleteError);
       }
     }

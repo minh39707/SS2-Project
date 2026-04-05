@@ -25,7 +25,7 @@ export default function WheelPicker({ data, value, onChange, label }) {
         });
       }, 100);
     }
-  }, []);
+  }, [initialScrollIndex]);
 
   const onMomentumScrollEnd = (event) => {
     const yOffset = event.nativeEvent.contentOffset.y;

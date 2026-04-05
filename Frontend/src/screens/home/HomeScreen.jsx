@@ -23,7 +23,13 @@ import {
   getFrequencyLabel,
   getLifeAreaLabel,
 } from "@/src/utils/onboarding";
-import { isTimeBasedHabitUnit } from "@/src/utils/habitTimer";
+import {
+  getHabitActionIcon,
+  getHabitActionLabel,
+  openHabitFocusRoute,
+  shouldOpenHabitFocus,
+} from "@/src/utils/habitActions";
+import { resolveHabitTargetUnit } from "@/src/utils/habitTimer";
 
 const orderedDays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const dayLabels = {
@@ -124,22 +130,6 @@ function getMissionRoute(router, missionId) {
     pathname: "/habit-edit",
     params: { habitId: missionId },
   });
-}
-
-function openHabitFocusRoute(router, habitId) {
-  router.push({
-    pathname: "/habit-focus",
-    params: { habitId },
-  });
-}
-
-function extractTargetUnitFromCaption(caption) {
-  if (typeof caption !== "string") {
-    return null;
-  }
-
-  const targetMatch = caption.match(/Target:\s*[\d.]+\s+([A-Za-z]+)/i);
-  return targetMatch?.[1] ?? null;
 }
 
 export default function HomeScreen() {
@@ -271,7 +261,7 @@ export default function HomeScreen() {
   const trackedMissionCount = Math.max(
     1,
     dashboardData?.dailySummary?.totalCount ??
-      (hasAnyHabits ? Math.min(4, dashboardData?.quickActions?.length ?? 1) : 1),
+      (hasAnyHabits ? Math.max(1, dashboardData?.quickActions?.length ?? 1) : 1),
   );
   const completedMissionCount = Math.min(
     trackedMissionCount,
@@ -293,9 +283,10 @@ export default function HomeScreen() {
 
   let missionItems =
     dashboardData?.quickActions?.map((action) => {
-      const resolvedTargetUnit =
-        action.targetUnit ?? extractTargetUnitFromCaption(action.description) ?? "times";
-      const isTimeHabit = isTimeBasedHabitUnit(resolvedTargetUnit);
+      const resolvedTargetUnit = resolveHabitTargetUnit(
+        action.targetUnit,
+        action.description,
+      );
 
       return {
         id: action.id,
@@ -308,13 +299,6 @@ export default function HomeScreen() {
         title: action.title,
         caption: action.description,
         reward: `+${action.expReward ?? 20} EXP`,
-        actionLabel: action.completedToday
-          ? "Undo completion"
-          : action.isScheduledToday
-            ? isTimeHabit
-              ? "Start"
-              : "Complete now"
-            : "Open mission",
         completedToday: action.completedToday,
         isScheduledToday: action.isScheduledToday,
         currentStreak: action.currentStreak ?? 0,
@@ -331,13 +315,12 @@ export default function HomeScreen() {
         title: "Create your first habit",
         caption: 'Use the "Add Habit" button below to start your streak.',
         reward: "+20 EXP",
-        actionLabel: "Add habit",
       },
     ];
   }
 
   const primaryMission = missionItems[0];
-  const habitListItems = missionItems.slice(0, 4);
+  const habitListItems = missionItems;
 
   const refreshDashboard = async () => {
     const refreshedDashboard = await getDashboardData({ forceRefresh: true });
@@ -365,7 +348,7 @@ export default function HomeScreen() {
       return;
     }
 
-    if (!primaryMission.completedToday && isTimeBasedHabitUnit(primaryMission.targetUnit)) {
+    if (shouldOpenHabitFocus(primaryMission)) {
       openHabitFocusRoute(router, primaryMission.id);
       return;
     }
@@ -403,7 +386,7 @@ export default function HomeScreen() {
       return;
     }
 
-    if (!mission.completedToday && isTimeBasedHabitUnit(mission.targetUnit)) {
+    if (shouldOpenHabitFocus(mission)) {
       openHabitFocusRoute(router, mission.id);
       return;
     }
@@ -646,13 +629,7 @@ export default function HomeScreen() {
                               color={
                                 mission.completedToday ? colors.success : colors.primary
                               }
-                              name={
-                                mission.completedToday
-                                  ? "refresh-outline"
-                                  : isTimeBasedHabitUnit(mission.targetUnit)
-                                    ? "timer-outline"
-                                  : "checkmark-circle-outline"
-                              }
+                              name={getHabitActionIcon(mission)}
                               size={15}
                             />
                             <Text
@@ -660,13 +637,7 @@ export default function HomeScreen() {
                               style={styles.questActionText}
                               variant="caption"
                             >
-                              {mission.completedToday
-                                ? "Undo"
-                                : mission.isScheduledToday
-                                  ? isTimeBasedHabitUnit(mission.targetUnit)
-                                    ? "Start"
-                                    : "Complete"
-                                  : "Open"}
+                              {getHabitActionLabel(mission)}
                             </Text>
                           </>
                         )}
@@ -776,21 +747,23 @@ export default function HomeScreen() {
               <Ionicons
                 color={colors.surface}
                 name={
-                  primaryMission?.completedToday
-                    ? "refresh-circle"
-                    : primaryMission?.isScheduledToday &&
-                        isTimeBasedHabitUnit(primaryMission?.targetUnit)
-                      ? "timer-outline"
-                    : primaryMission?.isScheduledToday
-                      ? "checkmark-circle"
-                      : "open-outline"
+                  getHabitActionIcon(primaryMission, {
+                    completed: "refresh-circle",
+                    complete: "checkmark-circle",
+                  })
                 }
                 size={18}
               />
               <Text color="white" style={styles.primaryCtaText} variant="label">
                 {isUpdatingMission
                   ? "Updating..."
-                  : primaryMission?.actionLabel ?? "Open mission"}
+                  : primaryMission?.id === "empty-first-habit"
+                    ? "Add habit"
+                    : getHabitActionLabel(primaryMission, {
+                        completed: "Undo completion",
+                        complete: "Complete now",
+                        open: "Open mission",
+                      })}
               </Text>
             </Pressable>
             <Pressable
@@ -1212,9 +1185,6 @@ const styles = StyleSheet.create({
   questActionButtonDone: {
     borderColor: "#BEE8CC",
     backgroundColor: "#F1FBF5",
-  },
-  questActionButtonDisabled: {
-    opacity: 0.55,
   },
   questActionButtonPressed: {
     opacity: 0.82,
