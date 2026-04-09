@@ -31,6 +31,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
+  const topSpacing = Math.max(insets.top + spacing.sm, spacing.xxl);
   const {
     completed,
     hydrated,
@@ -283,7 +284,7 @@ export default function SettingsScreen() {
 
   if (!completed || !userProfile?.id) {
     return (
-      <View style={styles.screen}>
+      <View style={[styles.screen, { paddingTop: topSpacing }]}>
         <Card style={styles.card}>
           <Text variant="subtitle">Sign in required</Text>
           <Text color="muted" variant="body">
@@ -299,18 +300,14 @@ export default function SettingsScreen() {
     <ScrollView
       contentContainerStyle={[
         styles.content,
-        { paddingBottom: Math.max(insets.bottom + 168, spacing.xxl * 3) },
+        {
+          paddingTop: topSpacing,
+          paddingBottom: Math.max(insets.bottom + 168, spacing.xxl * 3),
+        },
       ]}
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
-      <Animated.View entering={FadeInDown.duration(380)} style={styles.headerBlock}>
-        <Text variant="title">Settings</Text>
-        <Text color="muted" variant="body">
-          Customize your profile and keep your account ready across devices.
-        </Text>
-      </Animated.View>
-
       <Animated.View entering={FadeInDown.duration(430).delay(40)}>
         <Card style={styles.profileCard}>
           <View style={styles.profileRow}>
@@ -489,9 +486,6 @@ const styles = StyleSheet.create({
   content: {
     padding: spacing.lg,
     gap: spacing.lg,
-  },
-  headerBlock: {
-    gap: 6,
   },
   profileCard: {
     padding: spacing.lg,
