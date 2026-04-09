@@ -304,7 +304,6 @@ export async function apiRequest(path, options = {}) {
 
       if (
         explicitBaseUrl ||
-        error.cause?.name === "AbortError" ||
         index === baseUrls.length - 1
       ) {
         throw error;

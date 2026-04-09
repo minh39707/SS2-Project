@@ -149,6 +149,7 @@ export default function HomeScreen() {
   const [isUpdatingMission, setIsUpdatingMission] = useState(false);
   const [updatingHabitId, setUpdatingHabitId] = useState(null);
   const [missionError, setMissionError] = useState(null);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     if (!hydrated) {
@@ -174,8 +175,14 @@ export default function HomeScreen() {
         setDashboardData(result);
         setHasLoadedDashboard(true);
         setMissionError(null);
+        setLoadError(null);
       } catch (error) {
         console.error("Failed to load dashboard", error);
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load your dashboard right now.",
+        );
       } finally {
         setIsLoading(false);
       }
@@ -364,6 +371,7 @@ export default function HomeScreen() {
       }
 
       await refreshDashboard();
+      setLoadError(null);
     } catch (error) {
       setMissionError(
         error instanceof Error
@@ -402,6 +410,7 @@ export default function HomeScreen() {
       }
 
       await refreshDashboard();
+      setLoadError(null);
     } catch (error) {
       setMissionError(
         error instanceof Error
@@ -503,6 +512,17 @@ export default function HomeScreen() {
           </View>
         </Card>
       </Animated.View>
+
+      {loadError ? (
+        <Animated.View entering={FadeInDown.duration(410).delay(10)} style={styles.sectionBlock}>
+          <Card style={styles.errorCard}>
+            <Ionicons color={colors.danger} name="alert-circle-outline" size={18} />
+            <Text style={styles.errorText} variant="body">
+              {loadError}
+            </Text>
+          </Card>
+        </Animated.View>
+      ) : null}
 
       <Animated.View
         entering={FadeInDown.duration(430).delay(30)}
@@ -1191,6 +1211,19 @@ const styles = StyleSheet.create({
   },
   questActionText: {
     fontWeight: "700",
+  },
+  errorCard: {
+    padding: spacing.md,
+    flexDirection: "row",
+    gap: spacing.sm,
+    alignItems: "center",
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: "#FBCBD3",
+  },
+  errorText: {
+    flex: 1,
+    color: "#9F1239",
   },
   emptyQuestCard: {
     padding: spacing.md,

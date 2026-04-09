@@ -7,11 +7,11 @@ import { spacing } from '@/src/constants/theme';
 export default function StoreScreen() {
     return (<View style={styles.screen}>
       <Animated.View entering={FadeInDown.duration(450)} style={styles.content}>
-        <Text variant="title">Cua hang</Text>
+        <Text variant="title">Store</Text>
         <Card style={styles.card}>
-          <Text variant="subtitle">Vat pham thuong</Text>
+          <Text variant="subtitle">Featured items</Text>
           <Text variant="body" color="muted">
-            Ban co the them skin, booster va vat pham doi diem trong man hinh nay.
+            You can add skins, boosters, and redeemable items on this screen.
           </Text>
         </Card>
       </Animated.View>

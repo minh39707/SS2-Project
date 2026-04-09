@@ -119,11 +119,15 @@ router.get("/", requireUser, async (req, res) => {
         .from("characters")
         .select("level, current_hp, max_hp, current_exp, exp_to_next_level")
         .eq("user_id", req.userId)
-        .single(),
+        .maybeSingle(),
     ]);
     const { data: habits } = habitsResult;
     const { data: recentLogs } = logsResult;
     const { data: character } = characterResult;
+
+    if (characterResult.error) {
+      throw characterResult.error;
+    }
 
     const normalizedHabits = normalizeHabitsForDashboard(habits);
     const progressMap = buildHabitProgressMap(normalizedHabits, recentLogs ?? []);
@@ -155,6 +159,7 @@ router.get("/", requireUser, async (req, res) => {
     );
 
     return res.json({
+      resolvedUserId: req.userId,
       todayProgress: todayProgress.ratio,
       monthLabel: buildMonthLabel(),
       stats,

@@ -2,6 +2,8 @@ const express = require('express');
 const { supabase } = require('../supabase');
 const { requireUser } = require('../middleware/auth');
 const { buildStats, calculateGlobalStreak } = require('../utils/habitProgress');
+const { buildUserAnalyticsPayload } = require('../utils/userAnalytics');
+const { buildVersionedAvatarUrl } = require('../utils/avatarUrl');
 
 const router = express.Router();
 const AVATAR_BUCKET = 'avatars';
@@ -13,11 +15,12 @@ function serializeUserProfile(user, character) {
   const exp = character?.current_exp ?? 0;
   const nextExp = character?.exp_to_next_level ?? 100;
   const levelProgress = nextExp > 0 ? Math.floor((exp / nextExp) * 100) : 0;
+  const avatarVersion = user.updated_at ?? user.created_at ?? null;
 
   return {
     id: user.user_id,
     name: user.username,
-    avatarUrl: user.avatar_url ?? null,
+    avatarUrl: buildVersionedAvatarUrl(user.avatar_url, avatarVersion),
     level,
     levelProgress,
   };
@@ -63,6 +66,47 @@ async function loadCharacterProgress(userId) {
     .maybeSingle();
 
   return data;
+}
+
+async function loadAnalyticsHabits(userId) {
+  const { data, error } = await supabase
+    .from('habits')
+    .select('habit_id, category_id, title, description, frequency_type, frequency_days, is_active, created_at')
+    .eq('user_id', userId);
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
+}
+
+async function loadAnalyticsCategoryLabels() {
+  const { data, error } = await supabase
+    .from('habit_categories')
+    .select('category_id, name');
+
+  if (error) {
+    throw error;
+  }
+
+  return Object.fromEntries(
+    (data ?? []).map((category) => [category.category_id, category.name]),
+  );
+}
+
+async function loadAnalyticsLogs(userId) {
+  const { data, error } = await supabase
+    .from('habit_logs')
+    .select('habit_id, log_date, status, exp_change, hp_change')
+    .eq('user_id', userId)
+    .order('log_date', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
 }
 
 async function respondWithSerializedUser(res, userRecord, userId, statusCode = 200) {
@@ -130,7 +174,7 @@ router.get('/me', requireUser, async (req, res) => {
     const [userResult, characterResult] = await Promise.all([
       supabase
         .from('users')
-        .select('user_id, username, avatar_url, created_at')
+        .select('user_id, username, avatar_url, created_at, updated_at')
         .eq('user_id', req.userId)
         .single(),
       supabase
@@ -172,7 +216,7 @@ router.patch('/me', requireUser, async (req, res) => {
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', req.userId)
-      .select('user_id, username, avatar_url, created_at')
+      .select('user_id, username, avatar_url, created_at, updated_at')
       .single();
 
     if (error || !updatedUser) {
@@ -242,7 +286,7 @@ router.post('/me/avatar-upload', requireUser, async (req, res) => {
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', req.userId)
-      .select('user_id, username, avatar_url, created_at')
+      .select('user_id, username, avatar_url, created_at, updated_at')
       .single();
 
     if (error || !updatedUser) {
@@ -266,7 +310,7 @@ router.get('/me/stats', requireUser, async (req, res) => {
         .from('characters')
         .select('level, current_hp, max_hp, current_exp, exp_to_next_level')
         .eq('user_id', req.userId)
-        .single(),
+        .maybeSingle(),
       supabase
         .from('habit_logs')
         .select('log_date, status')
@@ -281,6 +325,54 @@ router.get('/me/stats', requireUser, async (req, res) => {
     return res.json(buildStats(character, streak));
   } catch (err) {
     console.error('Get stats error:', err);
+    return res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+// GET /api/users/me/analytics
+router.get('/me/analytics', requireUser, async (req, res) => {
+  try {
+    const [userResult, characterResult, habits, logs, categoryLabels] = await Promise.all([
+      supabase
+        .from('users')
+        .select('user_id, username, avatar_url, created_at, updated_at')
+        .eq('user_id', req.userId)
+        .maybeSingle(),
+      supabase
+        .from('characters')
+        .select('level, current_hp, max_hp, current_exp, exp_to_next_level')
+        .eq('user_id', req.userId)
+        .maybeSingle(),
+      loadAnalyticsHabits(req.userId),
+      loadAnalyticsLogs(req.userId),
+      loadAnalyticsCategoryLabels(),
+    ]);
+
+    if (userResult.error) {
+      throw userResult.error;
+    }
+
+    if (characterResult.error) {
+      throw characterResult.error;
+    }
+
+    const analytics = buildUserAnalyticsPayload({
+      character: characterResult.data,
+      habits,
+      logs,
+      categoryLabels,
+      days: req.query?.days,
+    });
+
+    return res.json({
+      resolvedUserId: req.userId,
+      profile: userResult.data
+        ? serializeUserProfile(userResult.data, characterResult.data)
+        : null,
+      ...analytics,
+    });
+  } catch (err) {
+    console.error('Get analytics error:', err);
     return res.status(500).json({ message: 'Internal server error.' });
   }
 });

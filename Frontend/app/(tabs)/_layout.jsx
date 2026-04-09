@@ -3,7 +3,7 @@ import { Tabs } from "expo-router";
 import AssistantChat from "@/src/components/layout/AssistantChat";
 import BottomTab from "@/src/components/layout/BottomTab";
 import { getDashboardData, listHabits } from "@/src/services/habit.service";
-import { getCurrentUser, getUserStats } from "@/src/services/user.service";
+import { getCurrentUser, getUserAnalytics, getUserStats } from "@/src/services/user.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
 
 export default function TabLayout() {
@@ -17,6 +17,8 @@ export default function TabLayout() {
     void Promise.allSettled([
       getCurrentUser(),
       getUserStats(),
+      getUserAnalytics({ days: 7 }),
+      getUserAnalytics({ days: 30 }),
       getDashboardData(),
       listHabits(userProfile),
     ]);
@@ -33,9 +35,9 @@ export default function TabLayout() {
         tabBar={(props) => <BottomTab {...props} />}
       >
         <Tabs.Screen name="index" options={{ title: "Home" }} />
-        <Tabs.Screen name="analytics" options={{ title: "Phan tich" }} />
-        <Tabs.Screen name="store" options={{ title: "Cua hang" }} />
-        <Tabs.Screen name="settings" options={{ title: "Cai dat" }} />
+        <Tabs.Screen name="analytics" options={{ title: "Analytics" }} />
+        <Tabs.Screen name="store" options={{ title: "Store" }} />
+        <Tabs.Screen name="settings" options={{ title: "Settings" }} />
       </Tabs>
       <AssistantChat variant="floating" />
     </>

@@ -8,6 +8,7 @@ import {
 
 const USER_PROFILE_CACHE_TTL_MS = 60_000;
 const USER_STATS_CACHE_TTL_MS = 45_000;
+const USER_ANALYTICS_CACHE_TTL_MS = 45_000;
 
 function getCurrentUserCacheKey(userId) {
   return `user-profile:${userId ?? "guest"}`;
@@ -15,6 +16,10 @@ function getCurrentUserCacheKey(userId) {
 
 function getUserStatsCacheKey(userId) {
   return `user-stats:${userId ?? "guest"}`;
+}
+
+function getUserAnalyticsCacheKey(userId, days = 7) {
+  return `user-analytics:${userId ?? "guest"}:${days}`;
 }
 
 async function loadUserServiceContext() {
@@ -69,6 +74,73 @@ function buildFallbackStats(completed) {
       icon: "flame",
     },
   ];
+}
+
+function buildFallbackAnalytics(persistedState, days = 7) {
+  const profile = buildFallbackProfile(
+    persistedState?.userProfile?.name,
+    persistedState?.completed,
+    persistedState?.userProfile?.avatarUrl ?? null,
+  );
+  const stats = buildFallbackStats(persistedState?.completed);
+
+  return {
+    profile,
+    range: {
+      days,
+      startDate: null,
+      endDate: null,
+    },
+    summary: {
+      scheduledCount: 0,
+      completedCount: 0,
+      missedCount: 0,
+      totalExpGained: 0,
+      totalHpChange: 0,
+      completionRate: 0,
+      activeDays: 0,
+      activeHabitCount: 0,
+      activeGlobalStreak: stats.find((item) => item.label === "Streaks")?.value ?? 0,
+      bestHabitStreak: 0,
+      dueTodayCount: 0,
+      completedTodayCount: 0,
+      remainingTodayCount: 0,
+    },
+    player: {
+      level: profile.level ?? 1,
+      currentHp: stats.find((item) => item.label === "HP")?.value ?? 0,
+      maxHp: stats.find((item) => item.label === "HP")?.max ?? 100,
+      currentExp: stats.find((item) => item.label === "EXP")?.value ?? 0,
+      expToNextLevel: stats.find((item) => item.label === "EXP")?.max ?? 100,
+      streak: stats.find((item) => item.label === "Streaks")?.value ?? 0,
+    },
+    stats,
+    activityHeatmap: {
+      weeks: [],
+      legend: [],
+    },
+    weekdayBreakdown: [],
+    categoryBreakdown: [],
+    streakHabits: [],
+    recentDays: [],
+    topHabits: [],
+    generatedAt: new Date().toISOString(),
+    source: "fallback_local_data",
+  };
+}
+
+function assertResolvedUserMatches(profile, resolvedUserId, expectedUserId) {
+  const backendUserId = profile?.id ?? resolvedUserId ?? null;
+
+  if (!backendUserId || !expectedUserId) {
+    return;
+  }
+
+  if (backendUserId !== expectedUserId) {
+    throw new Error(
+      "Your current session is linked to a different account. Please sign out and sign in again.",
+    );
+  }
 }
 
 export async function getCurrentUser(options = {}) {
@@ -190,6 +262,44 @@ export async function getUserStats(options = {}) {
     },
     {
       ttlMs: USER_STATS_CACHE_TTL_MS,
+      forceRefresh: options.forceRefresh ?? false,
+    },
+  );
+}
+
+export async function getUserAnalytics(options = {}) {
+  const { persistedState, userProfile } = await loadUserServiceContext();
+  const days = Number.isFinite(options.days) ? options.days : 7;
+  const cacheKey = getUserAnalyticsCacheKey(userProfile?.id, days);
+
+  if (!userProfile?.id) {
+    return setCachedResource(
+      cacheKey,
+      buildFallbackAnalytics(persistedState, days),
+      USER_ANALYTICS_CACHE_TTL_MS,
+    );
+  }
+
+  return loadCachedResource(
+    cacheKey,
+    async () => {
+      const response = await apiRequest(`/users/me/analytics?days=${days}`, {
+        method: "GET",
+        userId: userProfile.id,
+        authToken: userProfile.accessToken,
+        timeoutMs: 20000,
+      });
+
+      assertResolvedUserMatches(
+        response?.profile,
+        response?.resolvedUserId,
+        userProfile.id,
+      );
+
+      return response;
+    },
+    {
+      ttlMs: USER_ANALYTICS_CACHE_TTL_MS,
       forceRefresh: options.forceRefresh ?? false,
     },
   );

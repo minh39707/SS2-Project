@@ -31,6 +31,8 @@ function getHabitCacheKeys(userId, habitId = null) {
     keys.push(getHabitsListCacheKey(userId));
     keys.push(`user-profile:${userId}`);
     keys.push(`user-stats:${userId}`);
+    keys.push(`user-analytics:${userId}:7`);
+    keys.push(`user-analytics:${userId}:30`);
   }
 
   if (userId && habitId) {
@@ -142,6 +144,20 @@ function buildFallbackDashboard(data) {
   };
 }
 
+function assertResolvedUserMatches(response, expectedUserId) {
+  const backendUserId = response?.resolvedUserId ?? null;
+
+  if (!backendUserId || !expectedUserId) {
+    return;
+  }
+
+  if (backendUserId !== expectedUserId) {
+    throw new Error(
+      "Your current session is linked to a different account. Please sign out and sign in again.",
+    );
+  }
+}
+
 async function resolveAuthenticatedProfile(profileOverride = null) {
   const persistedState = await loadOnboardingState();
   const userProfile = profileOverride ?? persistedState?.userProfile ?? null;
@@ -177,19 +193,16 @@ export async function getDashboardData(options = {}) {
   return loadCachedResource(
     cacheKey,
     async () => {
-      try {
-        return await apiRequest("/dashboard", {
-          method: "GET",
-          userId: userProfile.id,
-          authToken: userProfile.accessToken,
-        });
-      } catch (error) {
-        if (__DEV__) {
-          console.warn("Falling back to local dashboard data.", error);
-        }
+      const response = await apiRequest("/dashboard", {
+        method: "GET",
+        userId: userProfile.id,
+        authToken: userProfile.accessToken,
+        timeoutMs: 20000,
+      });
 
-        return buildFallbackDashboard(persistedState?.data ?? null);
-      }
+      assertResolvedUserMatches(response, userProfile.id);
+
+      return response;
     },
     {
       ttlMs: DASHBOARD_CACHE_TTL_MS,
