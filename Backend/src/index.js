@@ -41,7 +41,16 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ message: 'Internal server error.' });
 });
 
-app.listen(PORT, () => {
-  console.log(` HabitForge API running at http://localhost:${PORT}/api`);
+// Global error handlers — keep the process alive when Supabase is temporarily unavailable
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(` HabitForge API running at http://0.0.0.0:${PORT}/api`);
   console.log(`   Health check: http://localhost:${PORT}/api/health`);
 });

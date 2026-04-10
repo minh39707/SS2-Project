@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useIsFocused } from "@react-navigation/native";
+import { useIsFocused, useNavigation } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   useWindowDimensions,
@@ -12,7 +13,7 @@ import {
 } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, { Circle, G } from "react-native-svg";
+import Svg, { Circle, G, Path, Defs, LinearGradient, Stop, Text as SvgText } from "react-native-svg";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import ScreenContainer from "@/src/components/ScreenContainer";
 import Card from "@/src/components/ui/Card";
@@ -187,6 +188,107 @@ function normalizeCategoryLabel(label = "") {
   return String(label).trim().toLowerCase() === "khac" ? "Other" : label;
 }
 
+function WeekdayLineChart({ data, maxCount }) {
+  const [width, setWidth] = useState(0);
+  const height = 160;
+  const paddingLeft = 38;
+  const paddingRight = 24;
+  const paddingY = 32;
+
+  if (!data || data.length === 0) return null;
+
+  const chartWidth = width - paddingLeft - paddingRight;
+  const chartHeight = height - paddingY * 2;
+
+  const points = data.map((item, index) => {
+    const x = paddingLeft + (chartWidth > 0 ? (index * chartWidth) / (data.length - 1) : 0);
+    const count = item.successCount ?? item.completedCount ?? 0;
+    const y = height - paddingY - (count / Math.max(maxCount, 1)) * chartHeight;
+    return { x, y };
+  });
+
+  const yLabels = maxCount > 0 ? [
+    { value: maxCount, y: paddingY },
+    { value: Math.round(maxCount / 2), y: paddingY + chartHeight / 2 },
+    { value: 0, y: height - paddingY }
+  ] : [{ value: 0, y: height - paddingY }];
+
+  // Create path using quadratic curves for smoothness
+  const linePath = points.reduce((path, point, index) => {
+    if (index === 0) return `M ${point.x} ${point.y}`;
+    const prev = points[index - 1];
+    const cp1x = (prev.x + point.x) / 2;
+    return `${path} C ${cp1x} ${prev.y}, ${cp1x} ${point.y}, ${point.x} ${point.y}`;
+  }, "");
+
+  const areaPath = width > 0 ? `${linePath} L ${points[points.length - 1].x} ${height - 10} L ${points[0].x} ${height - 10} Z` : "";
+
+  return (
+    <View
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+      style={styles.lineChartWrapper}
+    >
+      <Svg height={height} width="100%">
+        <Defs>
+          <LinearGradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
+            <Stop offset="0" stopColor={colors.primary} stopOpacity="0.12" />
+            <Stop offset="1" stopColor={colors.primary} stopOpacity="0" />
+          </LinearGradient>
+        </Defs>
+
+        {width > 0 && (
+          <>
+            {/* Grid Lines and Y Labels */}
+            {yLabels.map((label, i) => (
+              <G key={`y-${i}`}>
+                <Path
+                  d={`M ${paddingLeft} ${label.y} L ${width - paddingRight} ${label.y}`}
+                  stroke="#E5E7EB"
+                  strokeDasharray="4 4"
+                  strokeWidth="1"
+                />
+                <SvgText
+                  alignmentBaseline="middle"
+                  fill={colors.textMuted}
+                  fontSize="10"
+                  fontWeight="600"
+                  textAnchor="end"
+                  x={paddingLeft - 8}
+                  y={label.y}
+                >
+                  {label.value}
+                </SvgText>
+              </G>
+            ))}
+
+            <Path d={areaPath} fill="url(#chartGradient)" />
+            <Path
+              d={linePath}
+              fill="none"
+              stroke={colors.primary}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="3"
+            />
+            {points.map((point, index) => (
+              <G key={index}>
+                <Circle cx={point.x} cy={point.y} fill={colors.surface} r="4.5" stroke={colors.primary} strokeWidth="2.5" />
+              </G>
+            ))}
+          </>
+        )}
+      </Svg>
+      <View style={[styles.lineChartLabels, { paddingLeft: paddingLeft, paddingRight: paddingRight }]}>
+        {data.map((item, index) => (
+          <Text key={index} color="muted" style={styles.lineChartLabelText} variant="caption">
+            {item.label}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function CategoryDonut({ segments }) {
   const size = 126;
   const strokeWidth = 18;
@@ -257,10 +359,12 @@ function CategoryDonut({ segments }) {
 export default function AnalyticsScreen() {
   const router = useRouter();
   const isFocused = useIsFocused();
+  const navigation = useNavigation();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { completed, hydrated } = useOnboarding();
   const heatmapScrollRef = useRef(null);
+  const scrollViewRef = useRef(null);
   const [selectedRanges, setSelectedRanges] = useState({
     overview: "month",
     weekday: "week",
@@ -273,6 +377,8 @@ export default function AnalyticsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [isCompletionsExpanded, setIsCompletionsExpanded] = useState(false);
+  const [isStreaksExpanded, setIsStreaksExpanded] = useState(false);
   const hasLoadedScreenRef = useRef(false);
   const isCompactLayout = width < 430;
 
@@ -379,6 +485,17 @@ export default function AnalyticsScreen() {
     }
   };
 
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("tabPress", (e) => {
+      if (isFocused) {
+        e.preventDefault();
+        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+        void handleRefresh();
+      }
+    });
+    return unsubscribe;
+  }, [navigation, isFocused]);
+
   if (!hydrated || (completed && isLoading && !hasLoadedScreenRef.current)) {
     return (
       <View style={styles.loader}>
@@ -444,6 +561,9 @@ export default function AnalyticsScreen() {
     1,
   );
 
+  const displayCompletions = isCompletionsExpanded ? topHabits : topHabits.slice(0, 5);
+  const displayStreaks = isStreaksExpanded ? streakHabits : streakHabits.slice(0, 5);
+
   const renderRangeSelector = (selectedRange, onSelectRange) => (
     <View style={[styles.rangeRow, isCompactLayout && styles.rangeRowWrap]}>
       {RANGE_OPTIONS.map((option) => {
@@ -474,6 +594,15 @@ export default function AnalyticsScreen() {
 
   return (
     <ScreenContainer
+      refreshControl={
+        <RefreshControl
+          colors={[colors.primary]}
+          onRefresh={() => void handleRefresh()}
+          refreshing={isRefreshing}
+          tintColor={colors.primary}
+        />
+      }
+      scrollViewRef={scrollViewRef}
       contentContainerStyle={[
         styles.content,
         { paddingBottom: spacing.xxl * 5 + insets.bottom },
@@ -496,21 +625,6 @@ export default function AnalyticsScreen() {
             {renderRangeSelector(selectedRanges.overview, (period) =>
               setChartRange("overview", period),
             )}
-
-            <Pressable
-              disabled={isRefreshing}
-              onPress={() => void handleRefresh()}
-              style={({ pressed }) => [
-                styles.refreshButton,
-                pressed && !isRefreshing && styles.refreshButtonPressed,
-              ]}
-            >
-              {isRefreshing ? (
-                <ActivityIndicator color={colors.primary} size="small" />
-              ) : (
-                <Ionicons color={colors.primary} name="refresh" size={18} />
-              )}
-            </Pressable>
           </View>
 
           <View style={styles.quickStatsRow}>
@@ -543,7 +657,7 @@ export default function AnalyticsScreen() {
           <View style={styles.summaryStrip}>
             <View style={styles.summaryStripItem}>
               <Text color="muted" variant="caption">
-                Good habits ({selectedRanges.overview})
+                Good habits
               </Text>
               <Text style={styles.summaryStripValue} variant="subtitle">
                 {Math.round((goodSummary?.completionRate ?? 0) * 100)}%
@@ -552,7 +666,7 @@ export default function AnalyticsScreen() {
             <View style={styles.summaryStripDivider} />
             <View style={styles.summaryStripItem}>
               <Text color="muted" variant="caption">
-                Bad habits ({selectedRanges.overview})
+                Bad habits
               </Text>
               <Text style={styles.summaryStripValue} variant="subtitle">
                 {Math.round((badSummary?.avoidanceRate ?? 0) * 100)}%
@@ -561,7 +675,7 @@ export default function AnalyticsScreen() {
             <View style={styles.summaryStripDivider} />
             <View style={styles.summaryStripItem}>
                 <Text color="muted" variant="caption">
-                  EXP ({selectedRanges.overview})
+                  EXP gained
                 </Text>
               <Text style={styles.summaryStripValue} variant="subtitle">
                 {expMetric.value}/{expMetric.max}
@@ -665,40 +779,16 @@ export default function AnalyticsScreen() {
               <Text style={styles.cardTitle} variant="subtitle">
                 BY DAY OF WEEK
               </Text>
-              {!isCompactLayout ? (
-                <Text color="muted" variant="caption">
-                  Successful check-ins
-                </Text>
-              ) : null}
+              <Text color="muted" style={styles.chartDescription} variant="caption">
+                Biểu đồ này thống kê tần suất hoàn thành thói quen theo từng ngày trong tuần, giúp bạn nhận biết ngày nào mình hoạt động hiệu quả nhất.
+              </Text>
             </View>
             {renderRangeSelector(selectedRanges.weekday, (period) =>
               setChartRange("weekday", period),
             )}
           </View>
 
-          <View style={styles.weekdayChart}>
-            {weekdayBreakdown.map((day) => (
-              <View key={day.key} style={styles.weekdayColumn}>
-                <View style={styles.weekdayBarTrack}>
-                  <View
-                    style={[
-                      styles.weekdayBar,
-                      {
-                        height: `${Math.max(
-                          ((day.successCount ?? day.completedCount ?? 0) / maxWeekdayCount) * 100,
-                          (day.successCount ?? day.completedCount) ? 14 : 6,
-                        )}%`,
-                        backgroundColor: day.color,
-                      },
-                    ]}
-                  />
-                </View>
-                <Text numberOfLines={1} style={styles.weekdayLabel} variant="caption">
-                  {day.label}
-                </Text>
-              </View>
-            ))}
-          </View>
+          <WeekdayLineChart data={weekdayBreakdown} maxCount={maxWeekdayCount} />
         </Card>
 
         <Card style={[styles.halfCard, isCompactLayout && styles.fullCard]}>
@@ -781,7 +871,7 @@ export default function AnalyticsScreen() {
 
           {topHabits.length > 0 ? (
             <View style={styles.streakList}>
-              {topHabits.map((habit) => {
+              {displayCompletions.map((habit) => {
                 const habitCount =
                   habit.habitType === "negative"
                     ? habit.avoidedCount ?? habit.successCount ?? 0
@@ -826,6 +916,25 @@ export default function AnalyticsScreen() {
                   </View>
                 );
               })}
+
+              {topHabits.length > 5 && (
+                <Pressable
+                  onPress={() => setIsCompletionsExpanded(!isCompletionsExpanded)}
+                  style={({ pressed }) => [
+                    styles.expandButton,
+                    pressed && styles.expandButtonPressed,
+                  ]}
+                >
+                  <Text style={styles.expandButtonText}>
+                    {isCompletionsExpanded ? "Show less" : "More habits"}
+                  </Text>
+                  <Ionicons
+                    color={colors.primary}
+                    name={isCompletionsExpanded ? "chevron-up" : "chevron-down"}
+                    size={16}
+                  />
+                </Pressable>
+              )}
             </View>
           ) : (
             <Text color="muted" variant="body">
@@ -850,7 +959,7 @@ export default function AnalyticsScreen() {
 
           {streakHabits.length > 0 ? (
             <View style={styles.streakList}>
-              {streakHabits.map((habit) => (
+              {displayStreaks.map((habit) => (
                 <View key={habit.id} style={styles.streakRow}>
                   <View style={styles.streakTitleWrap}>
                     <Text numberOfLines={1} variant="body">
@@ -883,6 +992,25 @@ export default function AnalyticsScreen() {
                   </View>
                 </View>
               ))}
+
+              {streakHabits.length > 5 && (
+                <Pressable
+                  onPress={() => setIsStreaksExpanded(!isStreaksExpanded)}
+                  style={({ pressed }) => [
+                    styles.expandButton,
+                    pressed && styles.expandButtonPressed,
+                  ]}
+                >
+                  <Text style={styles.expandButtonText}>
+                    {isStreaksExpanded ? "Show less" : "More habits"}
+                  </Text>
+                  <Ionicons
+                    color={colors.primary}
+                    name={isStreaksExpanded ? "chevron-up" : "chevron-down"}
+                    size={16}
+                  />
+                </Pressable>
+              )}
             </View>
           ) : (
             <Text color="muted" variant="body">
@@ -1285,6 +1413,44 @@ const styles = StyleSheet.create({
   },
   streakValue: {
     color: "#27272A",
+    fontWeight: "700",
+  },
+  expandButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    marginTop: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E6E4DC",
+    backgroundColor: "#FFFFFF",
+  },
+  expandButtonPressed: {
+    backgroundColor: "#F9F9F7",
+  },
+  expandButtonText: {
+    color: colors.primary,
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  chartDescription: {
+    marginTop: 2,
+    lineHeight: 16,
+    maxWidth: "90%",
+  },
+  lineChartWrapper: {
+    marginTop: spacing.sm,
+    width: "100%",
+  },
+  lineChartLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: -10,
+  },
+  lineChartLabelText: {
+    fontSize: 10,
     fontWeight: "700",
   },
 });

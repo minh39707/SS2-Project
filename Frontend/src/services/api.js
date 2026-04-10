@@ -3,12 +3,14 @@ import { Platform } from "react-native";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
 const FALLBACK_REQUEST_TIMEOUT_MS = 4000;
-const HEALTHCHECK_TIMEOUT_MS = 1800;
+const HEALTHCHECK_TIMEOUT_MS = 3500;
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 const configuredApiHost = process.env.EXPO_PUBLIC_API_HOST?.trim();
 const configuredApiPort = process.env.EXPO_PUBLIC_API_PORT?.trim() || "4000";
 const configuredApiScheme =
   process.env.EXPO_PUBLIC_API_SCHEME?.trim() || "http";
+
+console.log('[api] env config:', { configuredApiUrl, configuredApiHost, configuredApiPort, configuredApiScheme });
 let preferredApiBaseUrl = null;
 let resolvingApiBaseUrlPromise = null;
 
@@ -34,21 +36,33 @@ class ApiConnectivityError extends Error {
   }
 }
 
+function getWebHost() {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    const hostname = window.location.hostname;
+    if (hostname && hostname !== "localhost" && hostname !== "127.0.0.1") {
+      return hostname;
+    }
+  }
+  return null;
+}
+
 function getExpoHost() {
   const expoConfig = Constants.expoConfig;
-  const hostUri = expoConfig?.hostUri;
+
+  // New discovery patterns for Expo 50+
   const debuggerHost =
     expoConfig?.extra?.expoGo?.debuggerHost ??
+    expoConfig?.hostUri ??
     Constants.expoGoConfig?.debuggerHost ??
     Constants.manifest2?.extra?.expoGo?.debuggerHost ??
-    Constants.manifest?.debuggerHost;
-  const candidate = hostUri ?? debuggerHost;
+    Constants.manifest?.debuggerHost ??
+    Constants.manifest?.hostUri;
 
-  if (!candidate) {
+  if (!debuggerHost) {
     return null;
   }
 
-  return candidate.split(":")[0] ?? null;
+  return debuggerHost.split(":")[0] ?? null;
 }
 
 function buildApiBaseUrl(host) {
@@ -80,9 +94,11 @@ function getApiBaseUrls(apiBaseUrl) {
   }
 
   const expoHost = getExpoHost();
+  const webHost = getWebHost();
 
   return dedupeBaseUrls([
     configuredApiUrl ? normalizeBaseUrl(configuredApiUrl) : null,
+    webHost ? buildApiBaseUrl(webHost) : null,
     configuredApiHost ? buildApiBaseUrl(configuredApiHost) : null,
     expoHost ? buildApiBaseUrl(expoHost) : null,
     ...getFallbackApiBaseUrls(),
@@ -207,13 +223,16 @@ async function probeApiBaseUrl(baseUrl) {
   const timeoutId = setTimeout(() => controller.abort(), HEALTHCHECK_TIMEOUT_MS);
 
   try {
+    console.log(`[api] probing ${normalizedBaseUrl}/health ...`);
     const response = await fetch(`${normalizedBaseUrl}/health`, {
       method: "GET",
       signal: controller.signal,
     });
 
+    console.log(`[api] probe ${normalizedBaseUrl} -> ${response.ok ? 'OK' : response.status}`);
     return response.ok;
-  } catch {
+  } catch (err) {
+    console.log(`[api] probe ${normalizedBaseUrl} -> FAILED (${err.message})`);
     return false;
   } finally {
     clearTimeout(timeoutId);
@@ -232,14 +251,17 @@ async function resolveApiBaseUrl(forceRefresh = false) {
   }
 
   resolvingApiBaseUrlPromise = (async () => {
+    console.log('[api] resolving base URL from candidates:', candidates);
     for (const baseUrl of candidates) {
       if (await probeApiBaseUrl(baseUrl)) {
+        console.log('[api] ✓ resolved to:', baseUrl);
         preferredApiBaseUrl = baseUrl;
         return baseUrl;
       }
     }
 
     preferredApiBaseUrl = candidates[0] ?? getFallbackApiBaseUrls()[0];
+    console.log('[api] ✗ no healthy candidate, defaulting to:', preferredApiBaseUrl);
     return preferredApiBaseUrl;
   })();
 

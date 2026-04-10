@@ -1,5 +1,5 @@
 const express = require("express");
-const { supabase } = require("../supabase");
+const { supabase, supabaseAuth } = require("../supabase");
 const { buildVersionedAvatarUrl } = require("../utils/avatarUrl");
 
 const router = express.Router();
@@ -139,7 +139,7 @@ router.post("/email/sign-in", async (req, res) => {
         .json({ message: "Email and password are required." });
     }
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({
       email,
       password,
     });

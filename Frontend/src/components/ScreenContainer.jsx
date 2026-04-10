@@ -2,8 +2,8 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View, } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '@/src/constants/colors';
 import { spacing } from '@/src/constants/theme';
-export default function ScreenContainer({ children, scroll = true, style, contentContainerStyle, }) {
-    const content = scroll ? (<ScrollView contentContainerStyle={[styles.scrollContent, contentContainerStyle]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+export default function ScreenContainer({ children, scroll = true, style, contentContainerStyle, refreshControl, scrollViewRef }) {
+    const content = scroll ? (<ScrollView ref={scrollViewRef} refreshControl={refreshControl} contentContainerStyle={[styles.scrollContent, contentContainerStyle]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       {children}
     </ScrollView>) : (<View style={[styles.staticContent, contentContainerStyle]}>{children}</View>);
     return (<SafeAreaView style={[styles.safeArea, style]} edges={['top', 'bottom']}>
