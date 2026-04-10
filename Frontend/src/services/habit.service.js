@@ -33,6 +33,10 @@ function getHabitCacheKeys(userId, habitId = null) {
     keys.push(`user-stats:${userId}`);
     keys.push(`user-analytics:${userId}:7`);
     keys.push(`user-analytics:${userId}:30`);
+    keys.push(`user-analytics:${userId}:day`);
+    keys.push(`user-analytics:${userId}:week`);
+    keys.push(`user-analytics:${userId}:month`);
+    keys.push(`user-analytics:${userId}:year`);
   }
 
   if (userId && habitId) {
@@ -314,6 +318,33 @@ export async function uncompleteHabit(habitId, profileOverride = null) {
   const persistedState = await loadOnboardingState();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
   const response = await apiRequest(`/habits/${habitId}/complete`, {
+    method: "DELETE",
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+  });
+
+  invalidateHabitCaches(userProfile.id, habitId);
+  return response;
+}
+
+export async function setHabitStatus(habitId, status, profileOverride = null) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+  const response = await apiRequest(`/habits/${habitId}/status`, {
+    method: "POST",
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+    body: { status },
+  });
+
+  invalidateHabitCaches(userProfile.id, habitId);
+  return response;
+}
+
+export async function clearHabitStatus(habitId, profileOverride = null) {
+  const persistedState = await loadOnboardingState();
+  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
+  const response = await apiRequest(`/habits/${habitId}/status`, {
     method: "DELETE",
     userId: userProfile.id,
     authToken: userProfile.accessToken,

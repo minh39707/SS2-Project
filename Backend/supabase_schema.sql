@@ -55,22 +55,6 @@ CREATE TABLE public.ai_side_quests (
   CONSTRAINT ai_side_quests_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id),
   CONSTRAINT ai_side_quests_quest_id_fkey FOREIGN KEY (quest_id) REFERENCES public.quests(quest_id)
 );
-CREATE TABLE public.analytics_daily (
-  analytics_id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  user_id uuid NOT NULL,
-  date date NOT NULL,
-  habits_completed integer NOT NULL DEFAULT 0,
-  habits_missed integer NOT NULL DEFAULT 0,
-  total_exp_gained integer NOT NULL DEFAULT 0,
-  total_hp_change integer NOT NULL DEFAULT 0,
-  active_streaks integer NOT NULL DEFAULT 0,
-  items_dropped integer NOT NULL DEFAULT 0,
-  coins_earned integer NOT NULL DEFAULT 0,
-  completion_rate numeric NOT NULL DEFAULT 0.00,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT analytics_daily_pkey PRIMARY KEY (analytics_id),
-  CONSTRAINT analytics_daily_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id)
-);
 CREATE TABLE public.characters (
   character_id uuid NOT NULL DEFAULT uuid_generate_v4(),
   user_id uuid NOT NULL UNIQUE,
@@ -128,6 +112,7 @@ CREATE TABLE public.habit_logs (
   notes text,
   logged_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT habit_logs_pkey PRIMARY KEY (log_id),
+  CONSTRAINT habit_logs_habit_id_log_date_key UNIQUE (habit_id, log_date),
   CONSTRAINT habit_logs_ai_message_id_fkey FOREIGN KEY (ai_message_id) REFERENCES public.ai_messages(message_id),
   CONSTRAINT habit_logs_habit_id_fkey FOREIGN KEY (habit_id) REFERENCES public.habits(habit_id),
   CONSTRAINT habit_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id)

@@ -17,8 +17,8 @@ export default function TabLayout() {
     void Promise.allSettled([
       getCurrentUser(),
       getUserStats(),
-      getUserAnalytics({ days: 7 }),
-      getUserAnalytics({ days: 30 }),
+      getUserAnalytics({ period: "week" }),
+      getUserAnalytics({ period: "month" }),
       getDashboardData(),
       listHabits(userProfile),
     ]);

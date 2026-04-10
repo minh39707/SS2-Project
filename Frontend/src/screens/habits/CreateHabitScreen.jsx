@@ -64,6 +64,22 @@ const TARGET_UNIT_OPTIONS = [
   { label: "km", value: "km" },
   { label: "Custom", value: "custom" },
 ];
+const HABIT_TYPE_OPTIONS = [
+  {
+    label: "Good Habit",
+    value: "positive",
+    icon: "leaf",
+    activeBackground: "#EAF4FF",
+    activeBorder: "#BFDBFE",
+  },
+  {
+    label: "Bad Habit",
+    value: "negative",
+    icon: "ban",
+    activeBackground: "#FFF1E8",
+    activeBorder: "#FBC9A8",
+  },
+];
 const REMINDER_BY_TIME = {
   morning: "08:00",
   afternoon: "13:00",
@@ -122,13 +138,74 @@ function getTargetValueDisplay(value) {
   return Number.isInteger(value) ? String(value) : String(value);
 }
 
+function normalizeHabitType(value) {
+  return value === "negative" || value === "bad" ? "negative" : "positive";
+}
+
+function getPeriodLabel(frequencyType) {
+  if (frequencyType === "monthly") {
+    return "month";
+  }
+
+  if (frequencyType === "weekly") {
+    return "week";
+  }
+
+  return "day";
+}
+
+function getDisplayTargetUnit(targetValue, targetUnit) {
+  if (!targetUnit) {
+    return "unit";
+  }
+
+  if (targetUnit === "times" && Number(targetValue) === 1) {
+    return "time";
+  }
+
+  return targetUnit;
+}
+
+function getErrorPlacement(errorMessage) {
+  if (!errorMessage) {
+    return null;
+  }
+
+  if (errorMessage === "Please enter a habit name." || errorMessage === "Habit title is required.") {
+    return "name";
+  }
+
+  if (
+    errorMessage === "Please choose at least one active day." ||
+    errorMessage === "Please choose at least one day for a weekly habit."
+  ) {
+    return "frequency";
+  }
+
+  if (
+    errorMessage === "Please enter a valid target number greater than zero." ||
+    errorMessage === "Target value must be greater than zero." ||
+    errorMessage === "Please choose or enter a target unit."
+  ) {
+    return "goal";
+  }
+
+  return "general";
+}
+
 export default function CreateHabitScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const habitId = Array.isArray(params.habitId) ? params.habitId[0] : params.habitId;
+  const requestedHabitType = Array.isArray(params.habitType)
+    ? params.habitType[0]
+    : params.habitType;
   const isEditMode = Boolean(habitId);
   const { completed, userProfile } = useOnboarding();
 
+  const [habitType, setHabitType] = useState(() =>
+    normalizeHabitType(requestedHabitType),
+  );
   const [habitName, setHabitName] = useState("");
   const [frequencyType, setFrequencyType] = useState("daily");
   const [frequencyDays, setFrequencyDays] = useState(ALL_WEEK_DAYS);
@@ -146,6 +223,29 @@ export default function CreateHabitScreen() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isLoadingHabit, setIsLoadingHabit] = useState(isEditMode);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (isEditMode) {
+      return;
+    }
+
+    const normalizedRequestedHabitType = normalizeHabitType(requestedHabitType);
+    const defaultPreferredTime = "morning";
+
+    setHabitType(normalizedRequestedHabitType);
+    setHabitName("");
+    setFrequencyType("daily");
+    setFrequencyDays(ALL_WEEK_DAYS);
+    setTargetValueInput("1");
+    setTargetUnit("times");
+    setCustomTargetUnit("");
+    setPreferredTime(defaultPreferredTime);
+    setSelectedCategory(LIFE_AREA_OPTIONS[0]);
+    setStartDate(new Date());
+    setReminders([getDefaultReminder(defaultPreferredTime)]);
+    setError(null);
+    setIsLoadingHabit(false);
+  }, [isEditMode, requestedHabitType]);
 
   useEffect(() => {
     if (!isEditMode || !habitId || !userProfile?.id) {
@@ -167,6 +267,7 @@ export default function CreateHabitScreen() {
           return;
         }
 
+        setHabitType(normalizeHabitType(habit.habitType));
         setHabitName(habit.title ?? "");
         setFrequencyType(habit.frequencyType ?? "daily");
         setFrequencyDays(
@@ -276,6 +377,10 @@ export default function CreateHabitScreen() {
     : 1;
   const resolvedTargetUnit =
     targetUnit === "custom" ? customTargetUnit.trim() : targetUnit;
+  const periodLabel = getPeriodLabel(frequencyType);
+  const isNegativeHabit = habitType === "negative";
+  const displayTargetUnit = getDisplayTargetUnit(safeTargetValue, resolvedTargetUnit);
+  const errorPlacement = getErrorPlacement(error);
 
   const adjustTargetValue = (delta) => {
     const nextValue = Math.max(0.1, safeTargetValue + delta);
@@ -315,7 +420,7 @@ export default function CreateHabitScreen() {
 
   const buildPayload = () => ({
     title: habitName.trim(),
-    habitType: "positive",
+    habitType,
     targetValue: safeTargetValue,
     targetUnit: resolvedTargetUnit,
     frequencyType,
@@ -463,6 +568,52 @@ export default function CreateHabitScreen() {
             style={styles.input}
             value={habitName}
           />
+          {errorPlacement === "name" ? (
+            <Text style={styles.errorText} variant="caption">
+              {error}
+            </Text>
+          ) : null}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle} variant="subtitle">
+            Habit Type
+          </Text>
+          <View style={styles.habitTypeRow}>
+            {HABIT_TYPE_OPTIONS.map((option) => {
+              const isActive = habitType === option.value;
+
+              return (
+                <Pressable
+                  key={option.value}
+                  onPress={() => setHabitType(option.value)}
+                  style={[
+                    styles.habitTypeCard,
+                    isActive && {
+                      backgroundColor: option.activeBackground,
+                      borderColor: option.activeBorder,
+                    },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.habitTypeIconWrap,
+                      isActive && styles.habitTypeIconWrapActive,
+                    ]}
+                  >
+                    <Ionicons
+                      color={option.value === "negative" ? "#B45309" : colors.primary}
+                      name={option.icon}
+                      size={18}
+                    />
+                  </View>
+                  <Text style={styles.habitTypeLabel} variant="body">
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.section}>
@@ -526,16 +677,22 @@ export default function CreateHabitScreen() {
               );
             })}
           </View>
+          {errorPlacement === "frequency" ? (
+            <Text style={styles.errorText} variant="caption">
+              {error}
+            </Text>
+          ) : null}
         </View>
 
         <View style={styles.goalCard}>
           <View style={styles.goalHeader}>
             <Text style={styles.sectionTitle} variant="subtitle">
-              Your Goal
+              {isNegativeHabit ? "Your Limit" : "Your Goal"}
             </Text>
             <Text color="primary" variant="caption">
-              {safeTargetValue} {resolvedTargetUnit || "unit"} per{" "}
-              {frequencyType === "monthly" ? "month" : "day"}
+              {isNegativeHabit ? "Up to" : ""}
+              {isNegativeHabit ? " " : ""}
+              {safeTargetValue} {resolvedTargetUnit || "unit"} per {periodLabel}
             </Text>
           </View>
 
@@ -551,8 +708,8 @@ export default function CreateHabitScreen() {
             </Pressable>
 
             <View style={styles.goalValueWrap}>
-              <Text color="muted" variant="caption">
-                Enter your target
+              <Text color="muted" style={styles.goalHintText} variant="caption">
+                {isNegativeHabit ? "Maximum allowed" : "Enter your target"}
               </Text>
               <TextInput
                 keyboardType="decimal-pad"
@@ -567,9 +724,10 @@ export default function CreateHabitScreen() {
                 style={styles.goalValueInput}
                 value={targetValueInput}
               />
-              <Text color="muted" variant="body">
-                {resolvedTargetUnit || "unit"} per{" "}
-                {frequencyType === "monthly" ? "month" : "day"}
+              <Text color="muted" style={styles.goalSubtext} variant="body">
+                {isNegativeHabit
+                  ? `At most ${safeTargetValue} ${displayTargetUnit} per ${periodLabel}`
+                  : `${displayTargetUnit} per ${periodLabel}`}
               </Text>
             </View>
 
@@ -627,6 +785,11 @@ export default function CreateHabitScreen() {
               style={styles.unitInput}
               value={customTargetUnit}
             />
+          ) : null}
+          {errorPlacement === "goal" ? (
+            <Text style={styles.errorText} variant="caption">
+              {error}
+            </Text>
           ) : null}
         </View>
 
@@ -752,7 +915,7 @@ export default function CreateHabitScreen() {
           </Pressable>
         </View>
 
-        {error ? (
+        {errorPlacement === "general" ? (
           <Text style={styles.errorText} variant="caption">
             {error}
           </Text>
@@ -913,6 +1076,36 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 16,
   },
+  habitTypeRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  habitTypeCard: {
+    flex: 1,
+    minHeight: 78,
+    borderRadius: radii.xl,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    gap: spacing.xs,
+    justifyContent: "center",
+  },
+  habitTypeIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  habitTypeIconWrapActive: {
+    backgroundColor: "#FFFFFF",
+  },
+  habitTypeLabel: {
+    fontWeight: "700",
+  },
   segmentRow: {
     flexDirection: "row",
     gap: 8,
@@ -1002,6 +1195,9 @@ const styles = StyleSheet.create({
     gap: 4,
     flex: 1,
   },
+  goalHintText: {
+    textAlign: "center",
+  },
   goalValue: {
     fontSize: 36,
     lineHeight: 42,
@@ -1018,6 +1214,9 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 30,
     fontWeight: "700",
+  },
+  goalSubtext: {
+    textAlign: "center",
   },
   unitRow: {
     flexDirection: "row",

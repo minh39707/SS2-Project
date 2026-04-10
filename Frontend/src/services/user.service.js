@@ -18,8 +18,8 @@ function getUserStatsCacheKey(userId) {
   return `user-stats:${userId ?? "guest"}`;
 }
 
-function getUserAnalyticsCacheKey(userId, days = 7) {
-  return `user-analytics:${userId ?? "guest"}:${days}`;
+function getUserAnalyticsCacheKey(userId, period = "week") {
+  return `user-analytics:${userId ?? "guest"}:${period}`;
 }
 
 async function loadUserServiceContext() {
@@ -76,7 +76,7 @@ function buildFallbackStats(completed) {
   ];
 }
 
-function buildFallbackAnalytics(persistedState, days = 7) {
+function buildFallbackAnalytics(persistedState, period = "week") {
   const profile = buildFallbackProfile(
     persistedState?.userProfile?.name,
     persistedState?.completed,
@@ -87,17 +87,24 @@ function buildFallbackAnalytics(persistedState, days = 7) {
   return {
     profile,
     range: {
-      days,
+      period,
+      days: period === "day" ? 1 : period === "year" ? 365 : period === "month" ? 30 : 7,
       startDate: null,
       endDate: null,
     },
     summary: {
       scheduledCount: 0,
+      successCount: 0,
       completedCount: 0,
       missedCount: 0,
+      punishedCount: 0,
+      avoidedCount: 0,
+      failedCount: 0,
+      unverifiedCount: 0,
       totalExpGained: 0,
       totalHpChange: 0,
       completionRate: 0,
+      avoidanceRate: 0,
       activeDays: 0,
       activeHabitCount: 0,
       activeGlobalStreak: stats.find((item) => item.label === "Streaks")?.value ?? 0,
@@ -105,6 +112,26 @@ function buildFallbackAnalytics(persistedState, days = 7) {
       dueTodayCount: 0,
       completedTodayCount: 0,
       remainingTodayCount: 0,
+      goodHabits: {
+        scheduledCount: 0,
+        completedCount: 0,
+        missedCount: 0,
+        punishedCount: 0,
+        completionRate: 0,
+        dueTodayCount: 0,
+        completedTodayCount: 0,
+        remainingTodayCount: 0,
+      },
+      badHabits: {
+        scheduledCount: 0,
+        avoidedCount: 0,
+        failedCount: 0,
+        unverifiedCount: 0,
+        avoidanceRate: 0,
+        dueTodayCount: 0,
+        avoidedTodayCount: 0,
+        unverifiedTodayCount: 0,
+      },
     },
     player: {
       level: profile.level ?? 1,
@@ -269,13 +296,24 @@ export async function getUserStats(options = {}) {
 
 export async function getUserAnalytics(options = {}) {
   const { persistedState, userProfile } = await loadUserServiceContext();
-  const days = Number.isFinite(options.days) ? options.days : 7;
-  const cacheKey = getUserAnalyticsCacheKey(userProfile?.id, days);
+  const period =
+    typeof options.period === "string" ? options.period.toLowerCase() : null;
+  const normalizedPeriod =
+    period === "day" || period === "week" || period === "month" || period === "year"
+      ? period
+      : Number.isFinite(options.days) && Number(options.days) >= 365
+        ? "year"
+        : Number.isFinite(options.days) && Number(options.days) >= 28
+          ? "month"
+          : Number.isFinite(options.days) && Number(options.days) === 1
+            ? "day"
+            : "week";
+  const cacheKey = getUserAnalyticsCacheKey(userProfile?.id, normalizedPeriod);
 
   if (!userProfile?.id) {
     return setCachedResource(
       cacheKey,
-      buildFallbackAnalytics(persistedState, days),
+      buildFallbackAnalytics(persistedState, normalizedPeriod),
       USER_ANALYTICS_CACHE_TTL_MS,
     );
   }
@@ -283,12 +321,15 @@ export async function getUserAnalytics(options = {}) {
   return loadCachedResource(
     cacheKey,
     async () => {
-      const response = await apiRequest(`/users/me/analytics?days=${days}`, {
+      const response = await apiRequest(
+        `/users/me/analytics?period=${normalizedPeriod}`,
+        {
         method: "GET",
         userId: userProfile.id,
         authToken: userProfile.accessToken,
         timeoutMs: 20000,
-      });
+        },
+      );
 
       assertResolvedUserMatches(
         response?.profile,

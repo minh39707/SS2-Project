@@ -131,6 +131,26 @@ export default function SettingsScreen() {
     return "Signed in";
   }, [userProfile?.authMethod]);
 
+  const providerAvatarActionLabel = useMemo(() => {
+    if (userProfile?.authMethod === "google") {
+      return "Use Google photo";
+    }
+
+    if (userProfile?.authMethod === "facebook") {
+      return "Use Facebook photo";
+    }
+
+    if (userProfile?.authMethod === "github") {
+      return "Use GitHub photo";
+    }
+
+    if (userProfile?.authMethod === "email") {
+      return "Use account photo";
+    }
+
+    return "Use profile photo";
+  }, [userProfile?.authMethod]);
+
   const handleSaveAvatar = async () => {
     if (savingAvatar || uploadingAvatar) {
       return;
@@ -359,8 +379,13 @@ export default function SettingsScreen() {
                 ]}
               >
                 <Ionicons color={colors.primary} name="person-circle-outline" size={14} />
-                <Text color="primary" variant="caption">
-                  Use {providerLabel} photo
+                <Text
+                  color="primary"
+                  numberOfLines={1}
+                  style={styles.resetChipText}
+                  variant="caption"
+                >
+                  {providerAvatarActionLabel}
                 </Text>
               </Pressable>
             ) : null}
@@ -377,25 +402,13 @@ export default function SettingsScreen() {
               ) : (
                 <Ionicons color={colors.primary} name="image-outline" size={14} />
               )}
-              <Text color="primary" variant="caption">
+              <Text
+                color="primary"
+                numberOfLines={1}
+                style={styles.resetChipText}
+                variant="caption"
+              >
                 Upload from device
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => {
-                setSelectedAvatarUrl(null);
-                setError(null);
-                setSuccessMessage(null);
-              }}
-              style={({ pressed }) => [
-                styles.resetChip,
-                pressed && styles.resetChipPressed,
-              ]}
-            >
-              <Ionicons color={colors.primary} name="refresh" size={14} />
-              <Text color="primary" variant="caption">
-                Use default
               </Text>
             </Pressable>
           </View>
@@ -515,17 +528,23 @@ const styles = StyleSheet.create({
   },
   actionChips: {
     flexDirection: "row",
-    flexWrap: "wrap",
     gap: 10,
   },
   resetChip: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 6,
     borderRadius: radii.pill,
     backgroundColor: "#EDF5FF",
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.sm,
     paddingVertical: 8,
+  },
+  resetChipText: {
+    flexShrink: 1,
+    textAlign: "center",
   },
   resetChipPressed: {
     opacity: 0.82,
@@ -560,9 +579,12 @@ const styles = StyleSheet.create({
   },
   logoutButton: {
     minHeight: 48,
+    borderColor: colors.danger,
+    backgroundColor: "#FEF2F2",
   },
   logoutText: {
     fontWeight: "700",
+    color: colors.danger,
   },
   errorText: {
     color: colors.danger,

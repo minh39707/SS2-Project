@@ -61,6 +61,11 @@ Bạn hãy vào tab **Headers** của Postman, thêm key là `x-user-id` và val
   - Header: `x-user-id: <user_id>`
 
 ### 4. Nhóm API Dashboard
+- `GET /api/users/me/analytics`
+  - Chuc nang: Lay du lieu analytics tong hop cho man hinh thong ke, bao gom summary, xu huong theo ngay, top habits, va player stats.
+  - Header: `x-user-id: <user_id>`
+  - Query tuy chon: `days=<1-90>` (mac dinh `7`)
+
 - `GET /api/dashboard`
   - Chức năng: Lấy toàn bộ dữ liệu gộp hiển thị ở trang chủ màn hình chính (Dữ liệu Lịch theo tuần, Thói quen tốt, Thói quen xấu, Stats, Quick Actions...).
   - Header: `x-user-id: <user_id>`

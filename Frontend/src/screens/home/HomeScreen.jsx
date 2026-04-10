@@ -13,8 +13,10 @@ import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, spacing } from "@/src/constants/theme";
 import {
+  clearHabitStatus,
   completeHabit,
   getDashboardData,
+  setHabitStatus,
   uncompleteHabit,
 } from "@/src/services/habit.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
@@ -29,6 +31,11 @@ import {
   openHabitFocusRoute,
   shouldOpenHabitFocus,
 } from "@/src/utils/habitActions";
+import {
+  getBadHabitStatusLabelVi,
+  getHabitTodayStatus,
+  isNegativeHabit,
+} from "@/src/utils/habitStatus";
 import { resolveHabitTargetUnit } from "@/src/utils/habitTimer";
 
 const orderedDays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -306,13 +313,47 @@ export default function HomeScreen() {
         title: action.title,
         caption: action.description,
         reward: `+${action.expReward ?? 20} EXP`,
+        habitType: action.habitType ?? "positive",
         completedToday: action.completedToday,
+        loggedToday: action.loggedToday,
+        todayStatus: action.todayStatus ?? null,
         isScheduledToday: action.isScheduledToday,
         currentStreak: action.currentStreak ?? 0,
         targetValue: action.targetValue ?? 1,
         targetUnit: resolvedTargetUnit,
       };
     }) ?? [];
+  const mapDashboardHabitToMission = (action) => {
+    const resolvedTargetUnit = resolveHabitTargetUnit(
+      action.targetUnit,
+      action.description,
+    );
+
+    return {
+      id: action.id,
+      icon:
+        action.icon === "water"
+          ? "water-outline"
+          : action.icon === "run"
+            ? "walk-outline"
+            : "sparkles-outline",
+      title: action.title,
+      caption: action.description,
+      reward: `+${action.expReward ?? 20} EXP`,
+      habitType: action.habitType ?? "positive",
+      completedToday: action.completedToday,
+      loggedToday: action.loggedToday,
+      todayStatus: action.todayStatus ?? null,
+      isScheduledToday: action.isScheduledToday,
+      currentStreak: action.currentStreak ?? 0,
+      targetValue: action.targetValue ?? 1,
+      targetUnit: resolvedTargetUnit,
+    };
+  };
+  const goodHabitItems =
+    dashboardData?.goodHabits?.map(mapDashboardHabitToMission) ?? [];
+  const badHabitItems =
+    dashboardData?.badHabits?.map(mapDashboardHabitToMission) ?? [];
 
   if (!hasAnyHabits) {
     missionItems = [
@@ -327,12 +368,41 @@ export default function HomeScreen() {
   }
 
   const primaryMission = missionItems[0];
-  const habitListItems = missionItems;
 
   const refreshDashboard = async () => {
     const refreshedDashboard = await getDashboardData({ forceRefresh: true });
     setDashboardData(refreshedDashboard);
     return refreshedDashboard;
+  };
+
+  const handleSetNegativeHabitStatus = async (habit, status) => {
+    if (!habit?.id || isUpdatingMission || updatingHabitId === habit.id) {
+      return;
+    }
+
+    setUpdatingHabitId(habit.id);
+    setMissionError(null);
+
+    try {
+      const currentStatus = getHabitTodayStatus(habit);
+
+      if (currentStatus === status) {
+        await clearHabitStatus(habit.id, userProfile);
+      } else {
+        await setHabitStatus(habit.id, status, userProfile);
+      }
+
+      await refreshDashboard();
+      setLoadError(null);
+    } catch (error) {
+      setMissionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to update this habit right now.",
+      );
+    } finally {
+      setUpdatingHabitId(null);
+    }
   };
 
   const handlePrimaryMission = async () => {
@@ -357,6 +427,10 @@ export default function HomeScreen() {
 
     if (shouldOpenHabitFocus(primaryMission)) {
       openHabitFocusRoute(router, primaryMission.id);
+      return;
+    }
+
+    if (isNegativeHabit(primaryMission)) {
       return;
     }
 
@@ -399,6 +473,10 @@ export default function HomeScreen() {
       return;
     }
 
+    if (isNegativeHabit(mission)) {
+      return;
+    }
+
     setUpdatingHabitId(mission.id);
     setMissionError(null);
 
@@ -421,6 +499,170 @@ export default function HomeScreen() {
       setUpdatingHabitId(null);
     }
   };
+
+  const renderHabitCard = (mission) => (
+    <View key={mission.id} style={styles.questPressable}>
+      <Card style={[styles.questCard, isNegativeHabit(mission) && styles.questCardNegative]}>
+        <View style={styles.questMainRow}>
+          <Pressable
+            onPress={() => getMissionRoute(router, mission.id)}
+            style={({ pressed }) => [
+              styles.questInfoPressable,
+              pressed && styles.questPressablePressed,
+            ]}
+          >
+            <View
+              style={[
+                styles.questIconWrap,
+                isNegativeHabit(mission) && styles.questIconWrapNegative,
+              ]}
+            >
+              <Ionicons
+                color={isNegativeHabit(mission) ? "#B45309" : colors.primary}
+                name={mission.icon}
+                size={18}
+              />
+            </View>
+            <View style={styles.questCopy}>
+              <Text variant="subtitle">{mission.title}</Text>
+              <Text color="muted" variant="body">
+                {mission.currentStreak
+                  ? `${mission.caption} - ${mission.currentStreak} day streak`
+                  : mission.caption}
+              </Text>
+            </View>
+          </Pressable>
+
+            <View style={styles.questSide}>
+            <View
+              style={[
+                styles.questReward,
+                isNegativeHabit(mission) && styles.questRewardNegative,
+              ]}
+            >
+              <Text
+                color={isNegativeHabit(mission) ? undefined : "primary"}
+                style={isNegativeHabit(mission) ? styles.questRewardTextNegative : null}
+                variant="caption"
+              >
+                {mission.reward}
+              </Text>
+            </View>
+
+            {isNegativeHabit(mission) ? (
+              <View style={styles.questNegativeWrap}>
+                <Text color="muted" style={styles.questNegativeHint} variant="caption">
+                  {getBadHabitStatusLabelVi(mission)}
+                </Text>
+
+                <View style={styles.questNegativeActions}>
+                  <Pressable
+                    disabled={updatingHabitId === mission.id || !mission.isScheduledToday}
+                    onPress={() => void handleSetNegativeHabitStatus(mission, "avoided")}
+                    style={({ pressed }) => [
+                      styles.questMiniAction,
+                      getHabitTodayStatus(mission) === "avoided" &&
+                        styles.questMiniActionSafe,
+                      pressed &&
+                        updatingHabitId !== mission.id &&
+                        styles.questActionButtonPressed,
+                    ]}
+                  >
+                    <Ionicons
+                      color={
+                        getHabitTodayStatus(mission) === "avoided"
+                          ? colors.success
+                          : colors.primary
+                      }
+                      name="shield-checkmark-outline"
+                      size={14}
+                    />
+                    <Text
+                      color={
+                        getHabitTodayStatus(mission) === "avoided"
+                          ? "success"
+                          : "primary"
+                      }
+                      style={styles.questMiniActionText}
+                      variant="caption"
+                    >
+                      Avoided
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    disabled={updatingHabitId === mission.id || !mission.isScheduledToday}
+                    onPress={() => void handleSetNegativeHabitStatus(mission, "failed")}
+                    style={({ pressed }) => [
+                      styles.questMiniAction,
+                      getHabitTodayStatus(mission) === "failed" &&
+                        styles.questMiniActionDanger,
+                      pressed &&
+                        updatingHabitId !== mission.id &&
+                        styles.questActionButtonPressed,
+                    ]}
+                  >
+                    <Ionicons
+                      color={
+                        getHabitTodayStatus(mission) === "failed"
+                          ? colors.danger
+                          : "#B45309"
+                      }
+                      name="warning-outline"
+                      size={14}
+                    />
+                    <Text
+                      style={[
+                        styles.questMiniActionText,
+                        getHabitTodayStatus(mission) === "failed" &&
+                          styles.questMiniActionTextDanger,
+                      ]}
+                      variant="caption"
+                    >
+                      Slipped
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                disabled={updatingHabitId === mission.id}
+                onPress={() => void handleHabitCardAction(mission)}
+                style={({ pressed }) => [
+                  styles.questActionButton,
+                  mission.completedToday && styles.questActionButtonDone,
+                  pressed &&
+                    updatingHabitId !== mission.id &&
+                    styles.questActionButtonPressed,
+                ]}
+              >
+                {updatingHabitId === mission.id ? (
+                  <ActivityIndicator color={colors.primary} size="small" />
+                ) : (
+                  <>
+                    <Ionicons
+                      color={
+                        mission.completedToday ? colors.success : colors.primary
+                      }
+                      name={getHabitActionIcon(mission)}
+                      size={15}
+                    />
+                    <Text
+                      color={mission.completedToday ? "success" : "primary"}
+                      style={styles.questActionText}
+                      variant="caption"
+                    >
+                      {getHabitActionLabel(mission)}
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            )}
+          </View>
+        </View>
+      </Card>
+    </View>
+  );
 
   return (
     <ScreenContainer contentContainerStyle={styles.content}>
@@ -577,7 +819,7 @@ export default function HomeScreen() {
           </View>
 
           <Text color="muted" variant="caption">
-            Check marks show completed days, red marks show missed active days, and the flame highlights your current streak.
+            Check marks show successful days, red marks show missed active days, and the flame highlights your current streak.
           </Text>
         </Card>
       </Animated.View>
@@ -587,91 +829,43 @@ export default function HomeScreen() {
         style={styles.sectionBlock}
       >
         <View style={styles.sectionHeader}>
-          <Text variant="subtitle">Your Habits</Text>
+          <Text variant="subtitle">Good Habits</Text>
           <Text color="muted" variant="body">
-            Quick access for today
+            Positive routines for today
           </Text>
         </View>
 
-        {habitListItems.length > 0 ? (
+        {goodHabitItems.length > 0 ? (
           <View style={styles.questList}>
-            {habitListItems.map((mission) => (
-              <View key={mission.id} style={styles.questPressable}>
-                <Card style={styles.questCard}>
-                  <View style={styles.questMainRow}>
-                    <Pressable
-                      onPress={() => getMissionRoute(router, mission.id)}
-                      style={({ pressed }) => [
-                        styles.questInfoPressable,
-                        pressed && styles.questPressablePressed,
-                      ]}
-                    >
-                      <View style={styles.questIconWrap}>
-                        <Ionicons
-                          color={colors.primary}
-                          name={mission.icon}
-                          size={18}
-                        />
-                      </View>
-                      <View style={styles.questCopy}>
-                        <Text variant="subtitle">{mission.title}</Text>
-                        <Text color="muted" variant="body">
-                          {mission.currentStreak
-                            ? `${mission.caption} - ${mission.currentStreak} day streak`
-                            : mission.caption}
-                        </Text>
-                      </View>
-                    </Pressable>
-
-                    <View style={styles.questSide}>
-                      <View style={styles.questReward}>
-                        <Text color="primary" variant="caption">
-                          {mission.reward}
-                        </Text>
-                      </View>
-
-                      <Pressable
-                        disabled={updatingHabitId === mission.id}
-                        onPress={() => void handleHabitCardAction(mission)}
-                        style={({ pressed }) => [
-                          styles.questActionButton,
-                          mission.completedToday && styles.questActionButtonDone,
-                          pressed &&
-                            updatingHabitId !== mission.id &&
-                            styles.questActionButtonPressed,
-                        ]}
-                      >
-                        {updatingHabitId === mission.id ? (
-                          <ActivityIndicator color={colors.primary} size="small" />
-                        ) : (
-                          <>
-                            <Ionicons
-                              color={
-                                mission.completedToday ? colors.success : colors.primary
-                              }
-                              name={getHabitActionIcon(mission)}
-                              size={15}
-                            />
-                            <Text
-                              color={mission.completedToday ? "success" : "primary"}
-                              style={styles.questActionText}
-                              variant="caption"
-                            >
-                              {getHabitActionLabel(mission)}
-                            </Text>
-                          </>
-                        )}
-                      </Pressable>
-                    </View>
-                  </View>
-                </Card>
-              </View>
-            ))}
+            {goodHabitItems.map(renderHabitCard)}
           </View>
         ) : (
           <Card style={styles.emptyQuestCard}>
             <Ionicons color={colors.primary} name="sparkles-outline" size={18} />
-            <Text variant="body">Add more habits to build a fuller mission board.</Text>
+            <Text variant="body">No good habits yet. Add one to start building momentum.</Text>
+          </Card>
+        )}
+      </Animated.View>
+
+      <Animated.View
+        entering={FadeInDown.duration(490).delay(75)}
+        style={styles.sectionBlock}
+      >
+        <View style={styles.sectionHeader}>
+          <Text variant="subtitle">Bad Habits</Text>
+          <Text color="muted" variant="body">
+            Check in and keep them under control
+          </Text>
+        </View>
+
+        {badHabitItems.length > 0 ? (
+          <View style={styles.questList}>
+            {badHabitItems.map(renderHabitCard)}
+          </View>
+        ) : (
+          <Card style={styles.emptyQuestCard}>
+            <Ionicons color="#B45309" name="shield-outline" size={18} />
+            <Text variant="body">No bad habits tracked right now.</Text>
           </Card>
         )}
       </Animated.View>
@@ -756,36 +950,111 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.ctaRow}>
-            <Pressable
-              onPress={() => void handlePrimaryMission()}
-              style={({ pressed }) => [
-                styles.primaryCta,
-                isUpdatingMission && styles.primaryCtaDisabled,
-                pressed && styles.primaryCtaPressed,
-              ]}
-            >
-              <Ionicons
-                color={colors.surface}
-                name={
-                  getHabitActionIcon(primaryMission, {
-                    completed: "refresh-circle",
-                    complete: "checkmark-circle",
-                  })
-                }
-                size={18}
-              />
-              <Text color="white" style={styles.primaryCtaText} variant="label">
-                {isUpdatingMission
-                  ? "Updating..."
-                  : primaryMission?.id === "empty-first-habit"
-                    ? "Add habit"
-                    : getHabitActionLabel(primaryMission, {
-                        completed: "Undo completion",
-                        complete: "Complete now",
-                        open: "Open mission",
-                      })}
-              </Text>
-            </Pressable>
+            {isNegativeHabit(primaryMission) ? (
+              <View style={styles.primaryNegativeWrap}>
+                <Text color="muted" style={styles.primaryNegativeHint} variant="caption">
+                  {getBadHabitStatusLabelVi(primaryMission)}
+                </Text>
+
+                <View style={styles.primaryNegativeActions}>
+                  <Pressable
+                    disabled={!primaryMission?.isScheduledToday}
+                    onPress={() => void handleSetNegativeHabitStatus(primaryMission, "avoided")}
+                    style={({ pressed }) => [
+                      styles.primaryNegativeButton,
+                      getHabitTodayStatus(primaryMission) === "avoided" &&
+                        styles.primaryNegativeButtonSafe,
+                      !primaryMission?.isScheduledToday && styles.primaryCtaDisabled,
+                      pressed && styles.primaryCtaPressed,
+                    ]}
+                  >
+                    <Ionicons
+                      color={
+                        getHabitTodayStatus(primaryMission) === "avoided"
+                          ? colors.success
+                          : colors.primary
+                      }
+                      name="shield-checkmark-outline"
+                      size={18}
+                    />
+                    <Text
+                      color={
+                        getHabitTodayStatus(primaryMission) === "avoided"
+                          ? "success"
+                          : "primary"
+                      }
+                      style={styles.primaryNegativeText}
+                      variant="label"
+                    >
+                      Avoided today
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    disabled={!primaryMission?.isScheduledToday}
+                    onPress={() => void handleSetNegativeHabitStatus(primaryMission, "failed")}
+                    style={({ pressed }) => [
+                      styles.primaryNegativeButton,
+                      getHabitTodayStatus(primaryMission) === "failed" &&
+                        styles.primaryNegativeButtonDanger,
+                      !primaryMission?.isScheduledToday && styles.primaryCtaDisabled,
+                      pressed && styles.primaryCtaPressed,
+                    ]}
+                  >
+                    <Ionicons
+                      color={
+                        getHabitTodayStatus(primaryMission) === "failed"
+                          ? colors.danger
+                          : "#B45309"
+                      }
+                      name="warning-outline"
+                      size={18}
+                    />
+                    <Text
+                      style={[
+                        styles.primaryNegativeText,
+                        getHabitTodayStatus(primaryMission) === "failed" &&
+                          styles.primaryNegativeTextDanger,
+                      ]}
+                      variant="label"
+                    >
+                      I slipped
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                onPress={() => void handlePrimaryMission()}
+                style={({ pressed }) => [
+                  styles.primaryCta,
+                  isUpdatingMission && styles.primaryCtaDisabled,
+                  pressed && styles.primaryCtaPressed,
+                ]}
+              >
+                <Ionicons
+                  color={colors.surface}
+                  name={
+                    getHabitActionIcon(primaryMission, {
+                      completed: "refresh-circle",
+                      complete: "checkmark-circle",
+                    })
+                  }
+                  size={18}
+                />
+                <Text color="white" style={styles.primaryCtaText} variant="label">
+                  {isUpdatingMission
+                    ? "Updating..."
+                    : primaryMission?.id === "empty-first-habit"
+                      ? "Add habit"
+                      : getHabitActionLabel(primaryMission, {
+                          completed: "Undo completion",
+                          complete: "Complete now",
+                          open: "Open mission",
+                        })}
+                </Text>
+              </Pressable>
+            )}
             <Pressable
               onPress={() =>
                 primaryMission?.id &&
@@ -1031,7 +1300,47 @@ const styles = StyleSheet.create({
   },
   ctaRow: {
     flexDirection: "row",
+    alignItems: "stretch",
     gap: spacing.sm,
+  },
+  primaryNegativeWrap: {
+    flex: 1,
+    gap: 8,
+  },
+  primaryNegativeHint: {
+    paddingHorizontal: 2,
+  },
+  primaryNegativeActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  primaryNegativeButton: {
+    flex: 1,
+    minHeight: 54,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#D6E2F6",
+    backgroundColor: "#F8FBFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  primaryNegativeButtonSafe: {
+    borderColor: "#BEE8CC",
+    backgroundColor: "#F1FBF5",
+  },
+  primaryNegativeButtonDanger: {
+    borderColor: "#F5C2C7",
+    backgroundColor: "#FFF6F7",
+  },
+  primaryNegativeText: {
+    fontWeight: "700",
+  },
+  primaryNegativeTextDanger: {
+    color: colors.danger,
+    fontWeight: "700",
   },
   primaryCta: {
     flex: 1,
@@ -1154,6 +1463,11 @@ const styles = StyleSheet.create({
   questCard: {
     padding: spacing.md,
   },
+  questCardNegative: {
+    borderWidth: 1,
+    borderColor: "#FED7AA",
+    backgroundColor: "#FFF7ED",
+  },
   questMainRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1173,6 +1487,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  questIconWrapNegative: {
+    backgroundColor: "#FFF1E8",
+  },
   questCopy: {
     flex: 1,
     gap: 2,
@@ -1181,6 +1498,44 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     gap: 8,
   },
+  questNegativeWrap: {
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  questNegativeHint: {
+    textAlign: "right",
+  },
+  questNegativeActions: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  questMiniAction: {
+    minWidth: 84,
+    minHeight: 36,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#CFE0FF",
+    backgroundColor: "#F8FBFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+  },
+  questMiniActionSafe: {
+    borderColor: "#BEE8CC",
+    backgroundColor: "#F1FBF5",
+  },
+  questMiniActionDanger: {
+    borderColor: "#F5C2C7",
+    backgroundColor: "#FFF6F7",
+  },
+  questMiniActionText: {
+    fontWeight: "700",
+  },
+  questMiniActionTextDanger: {
+    color: colors.danger,
+  },
   questReward: {
     paddingHorizontal: 10,
     paddingVertical: 7,
@@ -1188,6 +1543,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FBFF",
     borderWidth: 1,
     borderColor: "#D6E2F6",
+  },
+  questRewardNegative: {
+    backgroundColor: "#FFF1E8",
+    borderColor: "#FED7AA",
+  },
+  questRewardTextNegative: {
+    color: "#B45309",
+    fontWeight: "700",
   },
   questActionButton: {
     minWidth: 96,

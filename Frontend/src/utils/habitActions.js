@@ -1,4 +1,5 @@
 import { isTimeBasedHabitUnit } from "@/src/utils/habitTimer";
+import { getHabitTodayStatus, isNegativeHabit } from "@/src/utils/habitStatus";
 
 export function openHabitFocusRoute(router, habitId) {
   router.push({
@@ -12,6 +13,7 @@ export function shouldOpenHabitFocus(habit) {
     !!habit?.id &&
     !!habit?.isScheduledToday &&
     !habit?.completedToday &&
+    !isNegativeHabit(habit) &&
     isTimeBasedHabitUnit(habit?.targetUnit)
   );
 }
@@ -35,6 +37,20 @@ export function getHabitActionLabel(
     return open;
   }
 
+  if (isNegativeHabit(habit)) {
+    const status = getHabitTodayStatus(habit);
+
+    if (status === "failed") {
+      return "Logged slip";
+    }
+
+    if (status === "avoided") {
+      return "Avoided today";
+    }
+
+    return "Check in";
+  }
+
   return isTimeBasedHabitUnit(habit?.targetUnit) ? timed : complete;
 }
 
@@ -55,6 +71,20 @@ export function getHabitActionIcon(
 
   if (!habit?.isScheduledToday) {
     return open;
+  }
+
+  if (isNegativeHabit(habit)) {
+    const status = getHabitTodayStatus(habit);
+
+    if (status === "failed") {
+      return "warning-outline";
+    }
+
+    if (status === "avoided") {
+      return "shield-checkmark-outline";
+    }
+
+    return "help-circle-outline";
   }
 
   return isTimeBasedHabitUnit(habit?.targetUnit) ? timed : complete;

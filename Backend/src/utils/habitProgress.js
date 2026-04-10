@@ -1,3 +1,9 @@
+const {
+  deriveTodayStatus,
+  isSuccessStatus,
+  isSuccessfulLogForHabit,
+} = require("./habitStatus");
+
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_SCHEDULE_LOOKBACK_DAYS = 370;
 
@@ -228,20 +234,63 @@ function groupCompletedLogsByHabit(logs = []) {
   return groupedLogs;
 }
 
+function groupSuccessfulLogsByHabit(habits = [], logs = []) {
+  const habitsById = new Map(
+    habits.map((habit) => [habit.habit_id ?? habit.id, habit]),
+  );
+  const groupedLogs = new Map();
+
+  for (const log of logs) {
+    if (!log?.habit_id || !log?.log_date) {
+      continue;
+    }
+
+    const habit = habitsById.get(log.habit_id);
+
+    if (!habit || !isSuccessfulLogForHabit(habit, log)) {
+      continue;
+    }
+
+    const dateKeys = groupedLogs.get(log.habit_id) ?? [];
+    dateKeys.push(toDateKey(log.log_date));
+    groupedLogs.set(log.habit_id, dateKeys);
+  }
+
+  return groupedLogs;
+}
+
 function buildHabitProgressMap(habits = [], logs = [], todayDateKey = toDateKey()) {
-  const completedLogsByHabit = groupCompletedLogsByHabit(logs);
+  const completedLogsByHabit = groupSuccessfulLogsByHabit(habits, logs);
   const progressMap = new Map();
+  const todayLogsByHabit = new Map();
+
+  for (const log of logs) {
+    if (!log?.habit_id || !log?.log_date) {
+      continue;
+    }
+
+    if (toDateKey(log.log_date) !== todayDateKey) {
+      continue;
+    }
+
+    todayLogsByHabit.set(log.habit_id, log);
+  }
 
   for (const habit of habits) {
     const completedDateKeys = completedLogsByHabit.get(habit.habit_id) ?? [];
     const streak = calculateHabitStreak(habit, completedDateKeys, todayDateKey);
+    const isScheduledToday = isHabitScheduledOnDate(habit, todayDateKey);
+    const todayLog = todayLogsByHabit.get(habit.habit_id) ?? null;
+    const todayStatus = deriveTodayStatus(habit, todayLog, isScheduledToday);
 
     progressMap.set(habit.habit_id, {
-      completedToday: completedDateKeys.includes(todayDateKey),
+      completedToday: isSuccessStatus(todayStatus),
       currentStreak: streak.currentStreak,
       bestStreak: streak.bestStreak,
       lastCompletedAt: streak.lastCompletedAt,
-      isScheduledToday: isHabitScheduledOnDate(habit, todayDateKey),
+      isScheduledToday,
+      loggedToday: !!todayLog,
+      todayStatus,
     });
   }
 
@@ -257,7 +306,7 @@ function buildWeekCalendar(habits = [], logs = [], todayDateKey = toDateKey()) {
 
   const completedDateSet = new Set(
     logs
-      .filter((log) => !log.status || log.status === "completed")
+      .filter((log) => isSuccessStatus(log?.status))
       .map((log) => toDateKey(log.log_date)),
   );
   const { streakDateKeys } = calculateGlobalStreak([...completedDateSet], todayDateKey);

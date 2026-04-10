@@ -4,6 +4,7 @@ const { requireUser } = require('../middleware/auth');
 const { buildStats, calculateGlobalStreak } = require('../utils/habitProgress');
 const { buildUserAnalyticsPayload } = require('../utils/userAnalytics');
 const { buildVersionedAvatarUrl } = require('../utils/avatarUrl');
+const { isSuccessStatus } = require('../utils/habitStatus');
 
 const router = express.Router();
 const AVATAR_BUCKET = 'avatars';
@@ -71,7 +72,7 @@ async function loadCharacterProgress(userId) {
 async function loadAnalyticsHabits(userId) {
   const { data, error } = await supabase
     .from('habits')
-    .select('habit_id, category_id, title, description, frequency_type, frequency_days, is_active, created_at')
+    .select('habit_id, category_id, title, description, habit_type, frequency_type, frequency_days, is_active, created_at')
     .eq('user_id', userId);
 
   if (error) {
@@ -318,7 +319,7 @@ router.get('/me/stats', requireUser, async (req, res) => {
     ]);
     const { data: character } = characterResult;
     const completedDateKeys = (logsResult.data ?? [])
-      .filter((log) => !log.status || log.status === 'completed')
+      .filter((log) => !log.status || isSuccessStatus(log.status))
       .map((log) => log.log_date);
     const { streak } = calculateGlobalStreak(completedDateKeys);
 
@@ -362,6 +363,7 @@ router.get('/me/analytics', requireUser, async (req, res) => {
       logs,
       categoryLabels,
       days: req.query?.days,
+      period: req.query?.period,
     });
 
     return res.json({

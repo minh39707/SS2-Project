@@ -7,6 +7,16 @@ import { supabase } from "@/src/services/supabase";
 WebBrowser.maybeCompleteAuthSession();
 
 const OAUTH_CALLBACK_PATH = "auth-callback";
+const REDIRECT_PROTOCOLS_WITH_NETWORK_HOST = new Set([
+  "http:",
+  "https:",
+  "exp:",
+  "exps:",
+]);
+const INVALID_REFRESH_TOKEN_MESSAGES = [
+  "Invalid Refresh Token",
+  "Refresh Token Not Found",
+];
 
 function getSearchParams(urlPart = "") {
   const normalizedValue =
@@ -23,6 +33,11 @@ function buildApiBaseUrlForHost(hostname) {
 function getApiBaseUrlFromRedirect(redirectUrl) {
   try {
     const parsedUrl = new URL(redirectUrl);
+
+    if (!REDIRECT_PROTOCOLS_WITH_NETWORK_HOST.has(parsedUrl.protocol)) {
+      return null;
+    }
+
     const hostname = parsedUrl.hostname;
 
     if (!hostname) {
@@ -62,6 +77,23 @@ function buildProfile(user, session, fallbackProfile = {}) {
     refreshToken: session.refresh_token,
     authMethod,
   };
+}
+
+function isInvalidRefreshTokenError(error) {
+  const message =
+    error instanceof Error ? error.message : String(error ?? "");
+
+  return INVALID_REFRESH_TOKEN_MESSAGES.some((token) =>
+    message.includes(token),
+  );
+}
+
+async function safelyClearSupabaseSession() {
+  const { error } = await supabase.auth.signOut({ scope: "local" });
+
+  if (error && !isInvalidRefreshTokenError(error)) {
+    throw new Error(error.message);
+  }
 }
 
 async function finalizeOAuthSession(redirectUrl) {
@@ -160,7 +192,7 @@ export async function signInWithOAuth(provider) {
 
   // Clear the app's local auth state before starting a new OAuth flow.
   // This helps avoid reusing a previous Supabase session when switching accounts.
-  await supabase.auth.signOut();
+  await safelyClearSupabaseSession();
 
   if (__DEV__) {
     console.log(`[oauth:${provider}] redirectTo`, redirectTo);
@@ -210,9 +242,5 @@ export async function completeOAuthSignInFromRedirect(redirectUrl) {
 }
 
 export async function signOutFromSupabase() {
-  const { error } = await supabase.auth.signOut();
-
-  if (error) {
-    throw new Error(error.message);
-  }
+  await safelyClearSupabaseSession();
 }

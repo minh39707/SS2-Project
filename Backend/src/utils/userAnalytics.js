@@ -8,9 +8,15 @@ const {
   isHabitScheduledOnDate,
   toDateKey,
 } = require("./habitProgress");
+const {
+  getHabitType,
+  isNegativeHabit,
+  isPositiveHabit,
+  isSuccessStatus,
+  isSuccessfulLogForHabit,
+} = require("./habitStatus");
 
-const DEFAULT_ANALYTICS_RANGE_DAYS = 7;
-const MAX_ANALYTICS_RANGE_DAYS = 90;
+const DEFAULT_ANALYTICS_PERIOD = "week";
 const DAY_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
   weekday: "short",
 });
@@ -37,6 +43,7 @@ const CATEGORY_COLORS = [
   "#EC4899",
 ];
 const HEATMAP_WEEKS = 26;
+const ANALYTICS_PERIODS = new Set(["day", "week", "month", "year"]);
 
 function parseDateKey(dateKey) {
   const [year, month, day] = String(dateKey).split("-").map(Number);
@@ -57,18 +64,71 @@ function formatShortDate(dateKey) {
   return SHORT_DATE_FORMATTER.format(parseDateKey(dateKey));
 }
 
-function normalizeAnalyticsDays(daysValue) {
-  const parsedValue = Number.parseInt(daysValue, 10);
+function normalizeAnalyticsPeriod(periodValue, daysValue = null) {
+  if (typeof periodValue === "string") {
+    const normalized = periodValue.trim().toLowerCase();
 
-  if (!Number.isFinite(parsedValue)) {
-    return DEFAULT_ANALYTICS_RANGE_DAYS;
+    if (ANALYTICS_PERIODS.has(normalized)) {
+      return normalized;
+    }
   }
 
-  return Math.min(Math.max(parsedValue, 1), MAX_ANALYTICS_RANGE_DAYS);
+  const parsedDays = Number.parseInt(daysValue, 10);
+
+  if (parsedDays === 1) {
+    return "day";
+  }
+
+  if (parsedDays >= 365) {
+    return "year";
+  }
+
+  if (parsedDays >= 28) {
+    return "month";
+  }
+
+  return DEFAULT_ANALYTICS_PERIOD;
 }
 
-function isCompletedLog(log) {
-  return !log?.status || log.status === "completed";
+function getPeriodStartDateKey(period, todayDateKey = toDateKey()) {
+  const date = parseDateKey(todayDateKey);
+
+  if (period === "day") {
+    return todayDateKey;
+  }
+
+  if (period === "week") {
+    const dayNumber = date.getDay();
+    const mondayOffset = dayNumber === 0 ? -6 : 1 - dayNumber;
+    date.setDate(date.getDate() + mondayOffset);
+    return toDateKey(date);
+  }
+
+  if (period === "month") {
+    return toDateKey(new Date(date.getFullYear(), date.getMonth(), 1));
+  }
+
+  return toDateKey(new Date(date.getFullYear(), 0, 1));
+}
+
+function buildDateRange(period, todayDateKey = toDateKey()) {
+  const normalizedPeriod = normalizeAnalyticsPeriod(period);
+  const startDateKey = getPeriodStartDateKey(normalizedPeriod, todayDateKey);
+  const dateKeys = [];
+  let cursor = startDateKey;
+
+  while (cursor <= todayDateKey) {
+    dateKeys.push(cursor);
+    cursor = addDays(cursor, 1);
+  }
+
+  return {
+    period: normalizedPeriod,
+    days: dateKeys.length,
+    startDate: startDateKey,
+    endDate: todayDateKey,
+    dateKeys,
+  };
 }
 
 function sumLogField(logs = [], fieldName) {
@@ -76,22 +136,6 @@ function sumLogField(logs = [], fieldName) {
     (total, log) => total + Number(log?.[fieldName] ?? 0),
     0,
   );
-}
-
-function buildDateRange(days, todayDateKey = toDateKey()) {
-  const startDateKey = addDays(todayDateKey, -(days - 1));
-  const dateKeys = [];
-
-  for (let index = 0; index < days; index += 1) {
-    dateKeys.push(addDays(startDateKey, index));
-  }
-
-  return {
-    days,
-    startDate: startDateKey,
-    endDate: todayDateKey,
-    dateKeys,
-  };
 }
 
 function groupLogsByDate(logs = []) {
@@ -127,20 +171,44 @@ function groupLogsByHabit(logs = []) {
   return logsByHabit;
 }
 
-function groupCompletedDateKeysByHabit(logs = []) {
-  const completedDatesByHabit = new Map();
+function groupLogsByHabitDate(logs = []) {
+  const logsByHabitDate = new Map();
 
   for (const log of logs) {
-    if (!log?.habit_id || !log?.log_date || !isCompletedLog(log)) {
+    if (!log?.habit_id || !log?.log_date) {
       continue;
     }
 
-    const completedDateKeys = completedDatesByHabit.get(log.habit_id) ?? [];
-    completedDateKeys.push(toDateKey(log.log_date));
-    completedDatesByHabit.set(log.habit_id, completedDateKeys);
+    const key = `${log.habit_id}:${toDateKey(log.log_date)}`;
+    logsByHabitDate.set(key, log);
   }
 
-  return completedDatesByHabit;
+  return logsByHabitDate;
+}
+
+function groupSuccessfulDateKeysByHabit(habits = [], logs = []) {
+  const habitsById = new Map(
+    habits.map((habit) => [habit.habit_id, habit]),
+  );
+  const successfulDatesByHabit = new Map();
+
+  for (const log of logs) {
+    if (!log?.habit_id || !log?.log_date) {
+      continue;
+    }
+
+    const habit = habitsById.get(log.habit_id);
+
+    if (!habit || !isSuccessfulLogForHabit(habit, log)) {
+      continue;
+    }
+
+    const successfulDates = successfulDatesByHabit.get(log.habit_id) ?? [];
+    successfulDates.push(toDateKey(log.log_date));
+    successfulDatesByHabit.set(log.habit_id, successfulDates);
+  }
+
+  return successfulDatesByHabit;
 }
 
 function buildCategoryMap(habits = [], categoryLabels = {}) {
@@ -175,130 +243,196 @@ function getCurrentWeekStart(todayDateKey) {
   return addDays(todayDateKey, -WEEKDAY_KEY_ORDER.indexOf(getWeekdayKey(todayDateKey)));
 }
 
-function buildHeatmap(logsByDate, todayDateKey = toDateKey()) {
-  const currentWeekStart = getCurrentWeekStart(todayDateKey);
-  const firstWeekStart = addDays(currentWeekStart, -(HEATMAP_WEEKS - 1) * 7);
-  const dateCountMap = new Map();
+function getPositiveDayStatus(log, dateKey, todayDateKey) {
+  const status = log?.status ?? null;
 
-  for (const [dateKey, logsForDate] of logsByDate.entries()) {
-    const completedCount = logsForDate.filter(isCompletedLog).length;
-    dateCountMap.set(dateKey, completedCount);
+  if (status === "completed") {
+    return "completed";
   }
 
-  let maxCompletedCount = 0;
-  const weeks = [];
-
-  for (let weekIndex = 0; weekIndex < HEATMAP_WEEKS; weekIndex += 1) {
-    const weekStart = addDays(firstWeekStart, weekIndex * 7);
-    const days = [];
-
-    for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
-      const dateKey = addDays(weekStart, dayIndex);
-      const completedCount = dateCountMap.get(dateKey) ?? 0;
-      maxCompletedCount = Math.max(maxCompletedCount, completedCount);
-      days.push({
-        date: dateKey,
-        completedCount,
-        isToday: dateKey === todayDateKey,
-      });
-    }
-
-    weeks.push({
-      weekStart,
-      days,
-    });
+  if (status === "missed") {
+    return "missed";
   }
 
-  const intensityDivisor = Math.max(maxCompletedCount, 1);
+  if (status === "punished") {
+    return "punished";
+  }
 
+  if (dateKey < todayDateKey) {
+    return "missed";
+  }
+
+  return null;
+}
+
+function getNegativeDayStatus(log) {
+  const status = log?.status ?? null;
+
+  if (status === "avoided") {
+    return "avoided";
+  }
+
+  if (status === "failed") {
+    return "failed";
+  }
+
+  return "unverified";
+}
+
+function buildEmptyPositiveMetrics() {
   return {
-    weeks: weeks.map((week) => ({
-      ...week,
-      days: week.days.map((day) => ({
-        ...day,
-        intensity:
-          day.completedCount === 0
-            ? 0
-            : Math.max(1, Math.ceil((day.completedCount / intensityDivisor) * 4)),
-      })),
-    })),
-    legend: [
-      { level: 0, label: "Less" },
-      { level: 1, label: "" },
-      { level: 2, label: "" },
-      { level: 3, label: "" },
-      { level: 4, label: "More" },
-    ],
+    scheduledCount: 0,
+    completedCount: 0,
+    missedCount: 0,
+    punishedCount: 0,
+    pendingCount: 0,
+    completionRate: 0,
   };
 }
 
-function buildRecentDaySummaries(habits, logsByDate, dateRange, todayDateKey, streakDateSet) {
+function buildEmptyNegativeMetrics() {
+  return {
+    scheduledCount: 0,
+    avoidedCount: 0,
+    failedCount: 0,
+    unverifiedCount: 0,
+    avoidanceRate: 0,
+  };
+}
+
+function finalizePositiveMetrics(metrics) {
+  return {
+    ...metrics,
+    completionRate:
+      metrics.scheduledCount > 0
+        ? metrics.completedCount / metrics.scheduledCount
+        : 0,
+  };
+}
+
+function finalizeNegativeMetrics(metrics) {
+  return {
+    ...metrics,
+    avoidanceRate:
+      metrics.scheduledCount > 0
+        ? metrics.avoidedCount / metrics.scheduledCount
+        : 0,
+  };
+}
+
+function buildRecentDaySummaries(habits, logsByDate, logsByHabitDate, dateRange, todayDateKey, streakDateSet) {
   return dateRange.dateKeys.map((dateKey) => {
     const logsForDate = logsByDate.get(dateKey) ?? [];
-    const completedHabitIds = new Set(
-      logsForDate
-        .filter(isCompletedLog)
-        .map((log) => log.habit_id)
-        .filter(Boolean),
-    );
-    const scheduledHabits = habits.filter((habit) =>
-      isHabitScheduledOnDate(habit, dateKey),
-    );
-    const scheduledCount = scheduledHabits.length;
-    const completedCount = scheduledHabits.filter((habit) =>
-      completedHabitIds.has(habit.habit_id),
-    ).length;
-    const missedCount =
-      dateKey < todayDateKey ? Math.max(scheduledCount - completedCount, 0) : 0;
-    const completionRate =
-      scheduledCount > 0 ? completedCount / scheduledCount : 0;
+    const positive = buildEmptyPositiveMetrics();
+    const negative = buildEmptyNegativeMetrics();
+
+    for (const habit of habits) {
+      if (!isHabitScheduledOnDate(habit, dateKey)) {
+        continue;
+      }
+
+      const log = logsByHabitDate.get(`${habit.habit_id}:${dateKey}`) ?? null;
+
+      if (isPositiveHabit(habit)) {
+        positive.scheduledCount += 1;
+
+        const status = getPositiveDayStatus(log, dateKey, todayDateKey);
+
+        if (status === "completed") {
+          positive.completedCount += 1;
+        } else if (status === "missed") {
+          positive.missedCount += 1;
+        } else if (status === "punished") {
+          positive.punishedCount += 1;
+        } else {
+          positive.pendingCount += 1;
+        }
+
+        continue;
+      }
+
+      negative.scheduledCount += 1;
+
+      const status = getNegativeDayStatus(log);
+
+      if (status === "avoided") {
+        negative.avoidedCount += 1;
+      } else if (status === "failed") {
+        negative.failedCount += 1;
+      } else {
+        negative.unverifiedCount += 1;
+      }
+    }
+
+    const finalizedPositive = finalizePositiveMetrics(positive);
+    const finalizedNegative = finalizeNegativeMetrics(negative);
+    const successCount =
+      finalizedPositive.completedCount + finalizedNegative.avoidedCount;
+    const scheduledCount =
+      finalizedPositive.scheduledCount + finalizedNegative.scheduledCount;
 
     return {
       date: dateKey,
       label: formatDayLabel(dateKey),
       shortDate: formatShortDate(dateKey),
-      completedCount,
-      missedCount,
       scheduledCount,
-      completionRate,
+      successCount,
+      completedCount: successCount,
+      missedCount:
+        finalizedPositive.missedCount + finalizedPositive.punishedCount,
       expGained: sumLogField(logsForDate, "exp_change"),
       hpChange: sumLogField(logsForDate, "hp_change"),
       isToday: dateKey === todayDateKey,
       streak: streakDateSet.has(dateKey),
       hasActivity: logsForDate.length > 0 || scheduledCount > 0,
+      good: finalizedPositive,
+      bad: finalizedNegative,
     };
   });
 }
 
-function buildTopHabits(habits, logsByHabit, completedDateKeysByHabit, dateRange, progressMap, todayDateKey) {
+function buildTopHabits(habits, logsByHabit, successfulDateKeysByHabit, dateRange, progressMap, todayDateKey) {
   const rangeDateSet = new Set(dateRange.dateKeys);
 
   return habits
     .map((habit) => {
       const habitLogs = logsByHabit.get(habit.habit_id) ?? [];
-      const completedDateKeys = completedDateKeysByHabit.get(habit.habit_id) ?? [];
-      const completedDateSet = new Set(completedDateKeys);
-      const streak = calculateHabitStreak(habit, completedDateKeys, todayDateKey);
+      const successfulDateKeys = successfulDateKeysByHabit.get(habit.habit_id) ?? [];
+      const successfulDateSet = new Set(successfulDateKeys);
+      const streak = calculateHabitStreak(habit, successfulDateKeys, todayDateKey);
       const habitLogsInRange = habitLogs.filter((log) =>
         rangeDateSet.has(toDateKey(log.log_date)),
       );
       const scheduledCount = dateRange.dateKeys.filter((dateKey) =>
         isHabitScheduledOnDate(habit, dateKey),
       ).length;
-      const completedCount = dateRange.dateKeys.filter(
+      const successCount = dateRange.dateKeys.filter(
         (dateKey) =>
-          completedDateSet.has(dateKey) && isHabitScheduledOnDate(habit, dateKey),
+          successfulDateSet.has(dateKey) && isHabitScheduledOnDate(habit, dateKey),
       ).length;
-      const completionRate =
-        scheduledCount > 0 ? completedCount / scheduledCount : 0;
+      const failedCount = habitLogsInRange.filter(
+        (log) => log?.status === "failed",
+      ).length;
+      const punishedCount = habitLogsInRange.filter(
+        (log) => log?.status === "punished",
+      ).length;
+      const missedCount = habitLogsInRange.filter(
+        (log) => log?.status === "missed",
+      ).length;
       const progress = progressMap.get(habit.habit_id) ?? {};
 
       return {
         id: habit.habit_id,
         title: habit.title,
-        completedCount,
+        habitType: getHabitType(habit),
         scheduledCount,
-        completionRate,
+        successCount,
+        completedCount: isPositiveHabit(habit) ? successCount : 0,
+        avoidedCount: isNegativeHabit(habit) ? successCount : 0,
+        failedCount,
+        missedCount,
+        punishedCount,
+        successRate: scheduledCount > 0 ? successCount / scheduledCount : 0,
         currentStreak: streak.currentStreak,
         bestStreak: streak.bestStreak,
         lastCompletedAt: streak.lastCompletedAt,
@@ -306,20 +440,20 @@ function buildTopHabits(habits, logsByHabit, completedDateKeysByHabit, dateRange
         totalHpChange: sumLogField(habitLogsInRange, "hp_change"),
         isScheduledToday: progress.isScheduledToday ?? false,
         completedToday: progress.completedToday ?? false,
+        todayStatus: progress.todayStatus ?? null,
       };
     })
     .sort((leftHabit, rightHabit) => {
-      if (rightHabit.completedCount !== leftHabit.completedCount) {
-        return rightHabit.completedCount - leftHabit.completedCount;
+      if (rightHabit.successCount !== leftHabit.successCount) {
+        return rightHabit.successCount - leftHabit.successCount;
       }
 
-      if (rightHabit.completionRate !== leftHabit.completionRate) {
-        return rightHabit.completionRate - leftHabit.completionRate;
+      if (rightHabit.successRate !== leftHabit.successRate) {
+        return rightHabit.successRate - leftHabit.successRate;
       }
 
       return rightHabit.currentStreak - leftHabit.currentStreak;
-    })
-    .slice(0, 5);
+    });
 }
 
 function buildWeekdayBreakdown(recentDays = []) {
@@ -329,9 +463,14 @@ function buildWeekdayBreakdown(recentDays = []) {
       {
         key: weekdayKey,
         label: WEEKDAY_LABELS[weekdayKey],
-        completedCount: 0,
         scheduledCount: 0,
+        successCount: 0,
+        completedCount: 0,
+        avoidedCount: 0,
         missedCount: 0,
+        punishedCount: 0,
+        failedCount: 0,
+        unverifiedCount: 0,
       },
     ]),
   );
@@ -340,9 +479,14 @@ function buildWeekdayBreakdown(recentDays = []) {
     const weekdayKey = getWeekdayKey(day.date);
     const entry = weekdayMap.get(weekdayKey);
 
-    entry.completedCount += day.completedCount;
     entry.scheduledCount += day.scheduledCount;
-    entry.missedCount += day.missedCount;
+    entry.successCount += day.successCount;
+    entry.completedCount += day.good.completedCount;
+    entry.avoidedCount += day.bad.avoidedCount;
+    entry.missedCount += day.good.missedCount;
+    entry.punishedCount += day.good.punishedCount;
+    entry.failedCount += day.bad.failedCount;
+    entry.unverifiedCount += day.bad.unverifiedCount;
   }
 
   return WEEKDAY_KEY_ORDER.map((weekdayKey, index) => {
@@ -352,7 +496,7 @@ function buildWeekdayBreakdown(recentDays = []) {
       ...entry,
       completionRate:
         entry.scheduledCount > 0
-          ? entry.completedCount / entry.scheduledCount
+          ? entry.successCount / entry.scheduledCount
           : 0,
       color:
         index < 5
@@ -368,11 +512,18 @@ function buildWeekdayBreakdown(recentDays = []) {
 
 function buildCategoryBreakdown(habits, logs = [], categoryLabels = {}, dateRange) {
   const categoriesByHabitId = buildCategoryMap(habits, categoryLabels);
+  const habitsById = new Map(habits.map((habit) => [habit.habit_id, habit]));
   const rangeDateSet = new Set(dateRange.dateKeys);
   const categoryCountMap = new Map();
 
   for (const log of logs) {
-    if (!isCompletedLog(log) || !rangeDateSet.has(toDateKey(log.log_date))) {
+    if (!rangeDateSet.has(toDateKey(log.log_date))) {
+      continue;
+    }
+
+    const habit = habitsById.get(log.habit_id);
+
+    if (!habit || !isSuccessfulLogForHabit(habit, log)) {
       continue;
     }
 
@@ -410,18 +561,19 @@ function buildCategoryBreakdown(habits, logs = [], categoryLabels = {}, dateRang
   );
 }
 
-function buildStreakHabits(habits, completedDateKeysByHabit, categoryLabels, todayDateKey) {
+function buildStreakHabits(habits, successfulDateKeysByHabit, categoryLabels, todayDateKey) {
   const categoriesByHabitId = buildCategoryMap(habits, categoryLabels);
 
   return assignCategoryColors(
     habits
       .map((habit) => {
-        const completedDateKeys = completedDateKeysByHabit.get(habit.habit_id) ?? [];
-        const streak = calculateHabitStreak(habit, completedDateKeys, todayDateKey);
+        const successfulDateKeys = successfulDateKeysByHabit.get(habit.habit_id) ?? [];
+        const streak = calculateHabitStreak(habit, successfulDateKeys, todayDateKey);
 
         return {
           id: habit.habit_id,
           title: habit.title,
+          habitType: getHabitType(habit),
           categoryLabel: categoriesByHabitId.get(habit.habit_id) ?? "Other",
           currentStreak: streak.currentStreak,
           bestStreak: streak.bestStreak,
@@ -444,18 +596,91 @@ function buildStreakHabits(habits, completedDateKeysByHabit, categoryLabels, tod
   );
 }
 
+function buildHeatmap(recentDays = [], todayDateKey = toDateKey()) {
+  const currentWeekStart = getCurrentWeekStart(todayDateKey);
+  const firstWeekStart = addDays(currentWeekStart, -(HEATMAP_WEEKS - 1) * 7);
+  const successCountMap = new Map();
+
+  for (const day of recentDays) {
+    successCountMap.set(day.date, day.successCount);
+  }
+
+  let maxSuccessCount = 0;
+  const weeks = [];
+
+  for (let weekIndex = 0; weekIndex < HEATMAP_WEEKS; weekIndex += 1) {
+    const weekStart = addDays(firstWeekStart, weekIndex * 7);
+    const days = [];
+
+    for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
+      const dateKey = addDays(weekStart, dayIndex);
+      const successCount = successCountMap.get(dateKey) ?? 0;
+      maxSuccessCount = Math.max(maxSuccessCount, successCount);
+      days.push({
+        date: dateKey,
+        completedCount: successCount,
+        successCount,
+        isToday: dateKey === todayDateKey,
+      });
+    }
+
+    weeks.push({
+      weekStart,
+      days,
+    });
+  }
+
+  const intensityDivisor = Math.max(maxSuccessCount, 1);
+
+  return {
+    weeks: weeks.map((week) => ({
+      ...week,
+      days: week.days.map((day) => ({
+        ...day,
+        intensity:
+          day.successCount === 0
+            ? 0
+            : Math.max(1, Math.ceil((day.successCount / intensityDivisor) * 4)),
+      })),
+    })),
+    legend: [
+      { level: 0, label: "Less" },
+      { level: 1, label: "" },
+      { level: 2, label: "" },
+      { level: 3, label: "" },
+      { level: 4, label: "More" },
+    ],
+  };
+}
+
 function buildAnalyticsSummary(recentDays, habits, topHabits, activeGlobalStreak) {
-  const scheduledCount = recentDays.reduce(
-    (total, day) => total + day.scheduledCount,
-    0,
+  const good = recentDays.reduce(
+    (totals, day) => ({
+      scheduledCount: totals.scheduledCount + day.good.scheduledCount,
+      completedCount: totals.completedCount + day.good.completedCount,
+      missedCount: totals.missedCount + day.good.missedCount,
+      punishedCount: totals.punishedCount + day.good.punishedCount,
+    }),
+    {
+      scheduledCount: 0,
+      completedCount: 0,
+      missedCount: 0,
+      punishedCount: 0,
+    },
   );
-  const completedCount = recentDays.reduce(
-    (total, day) => total + day.completedCount,
-    0,
-  );
-  const missedCount = recentDays.reduce(
-    (total, day) => total + day.missedCount,
-    0,
+  const bad = recentDays.reduce(
+    (totals, day) => ({
+      scheduledCount: totals.scheduledCount + day.bad.scheduledCount,
+      avoidedCount: totals.avoidedCount + day.bad.avoidedCount,
+      failedCount: totals.failedCount + day.bad.failedCount,
+      unverifiedCount: totals.unverifiedCount + day.bad.unverifiedCount,
+    }),
+    {
+      scheduledCount: 0,
+      avoidedCount: 0,
+      failedCount: 0,
+      unverifiedCount: 0,
+    },
   );
   const totalExpGained = recentDays.reduce(
     (total, day) => total + day.expGained,
@@ -467,30 +692,61 @@ function buildAnalyticsSummary(recentDays, habits, topHabits, activeGlobalStreak
   );
   const todaySummary = recentDays.at(-1) ?? {
     scheduledCount: 0,
-    completedCount: 0,
+    successCount: 0,
+    good: buildEmptyPositiveMetrics(),
+    bad: buildEmptyNegativeMetrics(),
   };
   const bestHabitStreak = topHabits.reduce(
     (highestStreak, habit) => Math.max(highestStreak, habit.bestStreak ?? 0),
     0,
   );
+  const finalizedGood = {
+    ...good,
+    completionRate:
+      good.scheduledCount > 0 ? good.completedCount / good.scheduledCount : 0,
+    dueTodayCount: todaySummary.good.scheduledCount,
+    completedTodayCount: todaySummary.good.completedCount,
+    remainingTodayCount: Math.max(
+      todaySummary.good.scheduledCount - todaySummary.good.completedCount,
+      0,
+    ),
+  };
+  const finalizedBad = {
+    ...bad,
+    avoidanceRate:
+      bad.scheduledCount > 0 ? bad.avoidedCount / bad.scheduledCount : 0,
+    dueTodayCount: todaySummary.bad.scheduledCount,
+    avoidedTodayCount: todaySummary.bad.avoidedCount,
+    unverifiedTodayCount: todaySummary.bad.unverifiedCount,
+  };
+  const scheduledCount = good.scheduledCount + bad.scheduledCount;
+  const successCount = good.completedCount + bad.avoidedCount;
 
   return {
     scheduledCount,
-    completedCount,
-    missedCount,
+    successCount,
+    completedCount: good.completedCount,
+    missedCount: good.missedCount,
+    punishedCount: good.punishedCount,
+    avoidedCount: bad.avoidedCount,
+    failedCount: bad.failedCount,
+    unverifiedCount: bad.unverifiedCount,
     totalExpGained,
     totalHpChange,
-    completionRate: scheduledCount > 0 ? completedCount / scheduledCount : 0,
-    activeDays: recentDays.filter((day) => day.completedCount > 0).length,
+    completionRate: finalizedGood.completionRate,
+    avoidanceRate: finalizedBad.avoidanceRate,
+    activeDays: recentDays.filter((day) => day.successCount > 0).length,
     activeHabitCount: habits.filter((habit) => habit.is_active !== false).length,
     activeGlobalStreak,
     bestHabitStreak,
     dueTodayCount: todaySummary.scheduledCount,
-    completedTodayCount: todaySummary.completedCount,
+    completedTodayCount: todaySummary.good.completedCount,
     remainingTodayCount: Math.max(
-      todaySummary.scheduledCount - todaySummary.completedCount,
+      todaySummary.good.scheduledCount - todaySummary.good.completedCount,
       0,
     ),
+    goodHabits: finalizedGood,
+    badHabits: finalizedBad,
   };
 }
 
@@ -499,25 +755,28 @@ function buildUserAnalyticsPayload({
   habits = [],
   logs = [],
   categoryLabels = {},
-  days = DEFAULT_ANALYTICS_RANGE_DAYS,
+  days = null,
+  period = DEFAULT_ANALYTICS_PERIOD,
   todayDateKey = toDateKey(),
 }) {
-  const normalizedDays = normalizeAnalyticsDays(days);
-  const dateRange = buildDateRange(normalizedDays, todayDateKey);
-  const completedLogs = logs.filter(isCompletedLog);
-  const completedDateKeys = completedLogs.map((log) => toDateKey(log.log_date));
-  const { streak: activeGlobalStreak, streakDateKeys } = calculateGlobalStreak(
-    completedDateKeys,
-    todayDateKey,
-  );
-  const streakDateSet = new Set(streakDateKeys);
+  const normalizedPeriod = normalizeAnalyticsPeriod(period, days);
+  const dateRange = buildDateRange(normalizedPeriod, todayDateKey);
   const progressMap = buildHabitProgressMap(habits, logs, todayDateKey);
   const logsByDate = groupLogsByDate(logs);
   const logsByHabit = groupLogsByHabit(logs);
-  const completedDateKeysByHabit = groupCompletedDateKeysByHabit(logs);
+  const logsByHabitDate = groupLogsByHabitDate(logs);
+  const successfulDateKeysByHabit = groupSuccessfulDateKeysByHabit(habits, logs);
+  const successfulLogs = logs.filter((log) => isSuccessStatus(log?.status));
+  const successfulDateKeys = successfulLogs.map((log) => toDateKey(log.log_date));
+  const { streak: activeGlobalStreak, streakDateKeys } = calculateGlobalStreak(
+    successfulDateKeys,
+    todayDateKey,
+  );
+  const streakDateSet = new Set(streakDateKeys);
   const recentDays = buildRecentDaySummaries(
     habits,
     logsByDate,
+    logsByHabitDate,
     dateRange,
     todayDateKey,
     streakDateSet,
@@ -525,7 +784,7 @@ function buildUserAnalyticsPayload({
   const topHabits = buildTopHabits(
     habits,
     logsByHabit,
-    completedDateKeysByHabit,
+    successfulDateKeysByHabit,
     dateRange,
     progressMap,
     todayDateKey,
@@ -536,7 +795,7 @@ function buildUserAnalyticsPayload({
     topHabits,
     activeGlobalStreak,
   );
-  const activityHeatmap = buildHeatmap(logsByDate, todayDateKey);
+  const activityHeatmap = buildHeatmap(recentDays, todayDateKey);
   const weekdayBreakdown = buildWeekdayBreakdown(recentDays);
   const categoryBreakdown = buildCategoryBreakdown(
     habits,
@@ -546,14 +805,15 @@ function buildUserAnalyticsPayload({
   );
   const streakHabits = buildStreakHabits(
     habits,
-    completedDateKeysByHabit,
+    successfulDateKeysByHabit,
     categoryLabels,
     todayDateKey,
   );
 
   return {
     range: {
-      days: normalizedDays,
+      period: normalizedPeriod,
+      days: dateRange.days,
       startDate: dateRange.startDate,
       endDate: dateRange.endDate,
     },
@@ -573,5 +833,5 @@ function buildUserAnalyticsPayload({
 
 module.exports = {
   buildUserAnalyticsPayload,
-  normalizeAnalyticsDays,
+  normalizeAnalyticsPeriod,
 };

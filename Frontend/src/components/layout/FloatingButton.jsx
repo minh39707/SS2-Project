@@ -6,7 +6,7 @@ import { colors } from "@/src/constants/colors";
 import { shadows } from "@/src/constants/theme";
 import { useOnboarding } from "@/src/store/OnboardingContext";
 
-export default function FloatingButton({ onPress }) {
+export default function FloatingButton({ onPress, iconName = "add" }) {
   const { completed } = useOnboarding();
 
   const handlePress = () => {
@@ -25,7 +25,7 @@ export default function FloatingButton({ onPress }) {
       onPress={handlePress}
       style={({ pressed }) => [styles.button, pressed && styles.pressed]}
     >
-      <Ionicons color={colors.surface} name="add" size={28} />
+      <Ionicons color={colors.surface} name={iconName} size={28} />
     </Pressable>
   );
 }

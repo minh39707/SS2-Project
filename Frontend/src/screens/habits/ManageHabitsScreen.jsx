@@ -19,9 +19,11 @@ import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, shadows, spacing } from "@/src/constants/theme";
 import {
+  clearHabitStatus,
   completeHabit,
   deleteHabit,
   listHabits,
+  setHabitStatus,
   uncompleteHabit,
 } from "@/src/services/habit.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
@@ -31,6 +33,12 @@ import {
   openHabitFocusRoute,
   shouldOpenHabitFocus,
 } from "@/src/utils/habitActions";
+import {
+  getBadHabitStatusLabel,
+  getBadHabitStatusLabelVi,
+  getHabitTodayStatus,
+  isNegativeHabit,
+} from "@/src/utils/habitStatus";
 import { formatTimeLabel } from "@/src/utils/onboarding";
 
 function getFrequencyLabel(habit) {
@@ -49,6 +57,21 @@ function getFrequencyLabel(habit) {
   }
 
   return "Daily";
+}
+
+function getTargetLabel(habit) {
+  const periodLabel =
+    habit.frequencyType === "monthly"
+      ? "month"
+      : habit.frequencyType === "weekly"
+        ? "week"
+        : "day";
+
+  if (isNegativeHabit(habit)) {
+    return `Up to ${habit.targetValue} ${habit.targetUnit} per ${periodLabel}`;
+  }
+
+  return `${habit.targetValue} ${habit.targetUnit} per ${periodLabel}`;
 }
 
 function getReminderLabel(habit) {
@@ -188,6 +211,38 @@ export default function ManageHabitsScreen() {
     }
   };
 
+  const handleSetNegativeHabitStatus = async (habit, status) => {
+    setTogglingId(habit.id);
+    setError(null);
+
+    try {
+      const currentStatus = getHabitTodayStatus(habit);
+      const response =
+        currentStatus === status
+          ? await clearHabitStatus(habit.id, userProfile)
+          : await setHabitStatus(habit.id, status, userProfile);
+      const updatedHabit = response?.habit ?? null;
+
+      if (!updatedHabit) {
+        throw new Error("Unable to refresh this habit right now.");
+      }
+
+      setHabits((currentHabits) =>
+        currentHabits.map((currentHabit) =>
+          currentHabit.id === habit.id ? updatedHabit : currentHabit,
+        ),
+      );
+    } catch (toggleError) {
+      setError(
+        toggleError instanceof Error
+          ? toggleError.message
+          : "Unable to update this habit right now.",
+      );
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   const confirmDelete = (habit) => {
     Alert.alert(
       "Delete habit",
@@ -282,167 +337,269 @@ export default function ManageHabitsScreen() {
           }
           showsVerticalScrollIndicator={false}
         >
-          {habits.map((habit) => (
-            <View key={habit.id} style={styles.card}>
-              <View style={styles.cardTop}>
-                <View style={styles.cardTitleWrap}>
-                  <Text variant="subtitle">{habit.title}</Text>
-                  <Text color="muted" variant="body">
-                    {habit.targetValue} {habit.targetUnit} -{" "}
-                    {getFrequencyLabel(habit)}
-                  </Text>
+          {habits.map((habit) => {
+            const todayStatus = getHabitTodayStatus(habit);
+            const isBadHabit = isNegativeHabit(habit);
+            const isAvoided = todayStatus === "avoided";
+            const isFailed = todayStatus === "failed";
+
+            return (
+              <View key={habit.id} style={styles.card}>
+                <View style={styles.cardTop}>
+                  <View style={styles.cardTitleWrap}>
+                    <Text variant="subtitle">{habit.title}</Text>
+                    <Text color="muted" variant="body">
+                      {getTargetLabel(habit)} - {getFrequencyLabel(habit)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.timePill}>
+                    <Ionicons
+                      color={colors.primary}
+                      name="notifications-outline"
+                      size={14}
+                    />
+                    <Text color="primary" variant="caption">
+                      {getReminderLabel(habit)}
+                    </Text>
+                  </View>
                 </View>
 
-                <View style={styles.timePill}>
-                  <Ionicons
-                    color={colors.primary}
-                    name="notifications-outline"
-                    size={14}
-                  />
-                  <Text color="primary" variant="caption">
-                    {getReminderLabel(habit)}
-                  </Text>
-                </View>
-              </View>
+                <View style={styles.metaWrap}>
+                  <View style={styles.metaChip}>
+                    <Ionicons color="#64748B" name="folder-outline" size={14} />
+                    <Text color="muted" variant="caption">
+                      {habit.categoryLabel ?? "General"}
+                    </Text>
+                  </View>
 
-              <View style={styles.metaWrap}>
-                <View style={styles.metaChip}>
-                  <Ionicons color="#64748B" name="folder-outline" size={14} />
-                  <Text color="muted" variant="caption">
-                    {habit.categoryLabel ?? "General"}
-                  </Text>
-                </View>
+                  <View style={styles.metaChip}>
+                    <Ionicons color="#64748B" name="sunny-outline" size={14} />
+                    <Text color="muted" variant="caption">
+                      {habit.preferredTime ?? "morning"}
+                    </Text>
+                  </View>
 
-                <View style={styles.metaChip}>
-                  <Ionicons color="#64748B" name="sunny-outline" size={14} />
-                  <Text color="muted" variant="caption">
-                    {habit.preferredTime ?? "morning"}
-                  </Text>
-                </View>
+                  <View style={styles.metaChip}>
+                    <Ionicons
+                      color={isBadHabit ? "#B45309" : "#F59E0B"}
+                      name={isBadHabit ? "shield-outline" : "flame-outline"}
+                      size={14}
+                    />
+                    <Text color="muted" variant="caption">
+                      {habit.currentStreak ?? 0} day streak
+                    </Text>
+                  </View>
 
-                <View style={styles.metaChip}>
-                  <Ionicons color="#F59E0B" name="flame-outline" size={14} />
-                  <Text color="muted" variant="caption">
-                    {habit.currentStreak ?? 0} day streak
-                  </Text>
-                </View>
-
-                <View
-                  style={[
-                    styles.statusChip,
-                    habit.completedToday && styles.statusChipDone,
-                    habit.isScheduledToday && !habit.completedToday && styles.statusChipToday,
-                  ]}
-                >
-                  <Ionicons
-                    color={
-                      habit.completedToday
-                        ? colors.success
-                        : habit.isScheduledToday
-                          ? colors.primary
-                          : "#64748B"
-                    }
-                    name={
-                      habit.completedToday
-                        ? "checkmark-circle-outline"
-                        : habit.isScheduledToday
-                          ? "sparkles-outline"
-                          : "calendar-outline"
-                    }
-                    size={14}
-                  />
-                  <Text
-                    color={
-                      habit.completedToday
-                        ? "success"
-                        : habit.isScheduledToday
-                          ? "primary"
-                          : "muted"
-                    }
-                    variant="caption"
+                  <View
+                    style={[
+                      styles.statusChip,
+                      habit.completedToday && styles.statusChipDone,
+                      habit.isScheduledToday && !habit.completedToday && styles.statusChipToday,
+                    ]}
                   >
-                    {habit.completedToday
-                      ? "Completed today"
-                      : habit.isScheduledToday
-                        ? "Due today"
-                        : "Not due today"}
-                  </Text>
+                    <Ionicons
+                      color={
+                        habit.completedToday
+                          ? colors.success
+                          : habit.isScheduledToday
+                            ? colors.primary
+                            : "#64748B"
+                      }
+                      name={
+                        habit.completedToday
+                          ? "checkmark-circle-outline"
+                          : habit.isScheduledToday
+                            ? "sparkles-outline"
+                            : "calendar-outline"
+                      }
+                      size={14}
+                    />
+                    <Text
+                      color={
+                        isBadHabit
+                          ? isAvoided
+                            ? "success"
+                            : isFailed
+                              ? "danger"
+                              : habit.isScheduledToday
+                                ? "primary"
+                                : "muted"
+                          : habit.completedToday
+                            ? "success"
+                            : habit.isScheduledToday
+                              ? "primary"
+                              : "muted"
+                      }
+                      variant="caption"
+                    >
+                      {isBadHabit
+                        ? getBadHabitStatusLabelVi(habit)
+                        : habit.completedToday
+                          ? "Completed today"
+                          : todayStatus === "punished"
+                            ? "Punished"
+                            : todayStatus === "missed"
+                              ? "Missed"
+                              : habit.isScheduledToday
+                                ? "Due today"
+                                : "Not due today"}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.actionsRow}>
+                  {isBadHabit ? (
+                    <View style={styles.negativeActionsWrap}>
+                      <Text color="muted" style={styles.negativeHint} variant="caption">
+                        {getBadHabitStatusLabel(habit)}
+                      </Text>
+
+                      <View style={styles.negativeActionsRow}>
+                        <Pressable
+                          disabled={togglingId === habit.id || !habit.isScheduledToday}
+                          onPress={() => void handleSetNegativeHabitStatus(habit, "avoided")}
+                          style={({ pressed }) => [
+                            styles.negativeActionButton,
+                            isAvoided && styles.negativeActionButtonSafe,
+                            !habit.isScheduledToday && styles.completeButtonDisabled,
+                            pressed &&
+                              togglingId !== habit.id &&
+                              habit.isScheduledToday &&
+                              styles.completeButtonPressed,
+                          ]}
+                        >
+                          {togglingId === habit.id ? (
+                            <ActivityIndicator color={colors.primary} size="small" />
+                          ) : (
+                            <>
+                              <Ionicons
+                                color={isAvoided ? colors.success : colors.primary}
+                                name="shield-checkmark-outline"
+                                size={16}
+                              />
+                              <Text
+                                color={isAvoided ? "success" : "primary"}
+                                style={styles.completeText}
+                                variant="label"
+                              >
+                                Avoided today
+                              </Text>
+                            </>
+                          )}
+                        </Pressable>
+
+                        <Pressable
+                          disabled={togglingId === habit.id || !habit.isScheduledToday}
+                          onPress={() => void handleSetNegativeHabitStatus(habit, "failed")}
+                          style={({ pressed }) => [
+                            styles.negativeActionButton,
+                            isFailed && styles.negativeActionButtonDanger,
+                            !habit.isScheduledToday && styles.completeButtonDisabled,
+                            pressed &&
+                              togglingId !== habit.id &&
+                              habit.isScheduledToday &&
+                              styles.completeButtonPressed,
+                          ]}
+                        >
+                          {togglingId === habit.id ? (
+                            <ActivityIndicator color={colors.danger} size="small" />
+                          ) : (
+                            <>
+                              <Ionicons
+                                color={isFailed ? colors.danger : "#B45309"}
+                                name="warning-outline"
+                                size={16}
+                              />
+                              <Text
+                                style={[
+                                  styles.completeText,
+                                  isFailed && styles.negativeDangerText,
+                                ]}
+                                variant="label"
+                              >
+                                I slipped
+                              </Text>
+                            </>
+                          )}
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <Pressable
+                      disabled={togglingId === habit.id || !habit.isScheduledToday}
+                      onPress={() => void handleToggleComplete(habit)}
+                      style={({ pressed }) => [
+                        styles.completeButton,
+                        habit.completedToday && styles.completeButtonDone,
+                        !habit.isScheduledToday && styles.completeButtonDisabled,
+                        pressed &&
+                          togglingId !== habit.id &&
+                          habit.isScheduledToday &&
+                          styles.completeButtonPressed,
+                      ]}
+                    >
+                      {togglingId === habit.id ? (
+                        <ActivityIndicator color={colors.primary} size="small" />
+                      ) : (
+                        <>
+                          <Ionicons
+                            color={habit.completedToday ? colors.success : colors.primary}
+                            name={getHabitActionIcon(habit)}
+                            size={16}
+                          />
+                          <Text
+                            color={habit.completedToday ? "success" : "primary"}
+                            style={styles.completeText}
+                            variant="label"
+                          >
+                            {getHabitActionLabel(habit)}
+                          </Text>
+                        </>
+                      )}
+                    </Pressable>
+                  )}
+
+                  <SecondaryButton
+                    label="Edit"
+                    onPress={() =>
+                      router.push({
+                        pathname: "/habit-edit",
+                        params: { habitId: habit.id },
+                      })
+                    }
+                    style={styles.editButton}
+                  />
+
+                  <Pressable
+                    disabled={deletingId === habit.id}
+                    onPress={() => confirmDelete(habit)}
+                    style={({ pressed }) => [
+                      styles.deleteButton,
+                      pressed &&
+                        deletingId !== habit.id &&
+                        styles.deleteButtonPressed,
+                    ]}
+                  >
+                    {deletingId === habit.id ? (
+                      <ActivityIndicator color={colors.danger} size="small" />
+                    ) : (
+                      <>
+                        <Ionicons
+                          color={colors.danger}
+                          name="trash-outline"
+                          size={16}
+                        />
+                        <Text style={styles.deleteText} variant="label">
+                          Delete
+                        </Text>
+                      </>
+                    )}
+                  </Pressable>
                 </View>
               </View>
-
-              <View style={styles.actionsRow}>
-                <Pressable
-                  disabled={togglingId === habit.id || !habit.isScheduledToday}
-                  onPress={() => void handleToggleComplete(habit)}
-                  style={({ pressed }) => [
-                    styles.completeButton,
-                    habit.completedToday && styles.completeButtonDone,
-                    !habit.isScheduledToday && styles.completeButtonDisabled,
-                    pressed &&
-                      togglingId !== habit.id &&
-                      habit.isScheduledToday &&
-                      styles.completeButtonPressed,
-                  ]}
-                >
-                  {togglingId === habit.id ? (
-                    <ActivityIndicator color={colors.primary} size="small" />
-                  ) : (
-                    <>
-                      <Ionicons
-                        color={habit.completedToday ? colors.success : colors.primary}
-                        name={getHabitActionIcon(habit)}
-                        size={16}
-                      />
-                      <Text
-                        color={habit.completedToday ? "success" : "primary"}
-                        style={styles.completeText}
-                        variant="label"
-                      >
-                        {getHabitActionLabel(habit)}
-                      </Text>
-                    </>
-                  )}
-                </Pressable>
-
-                <SecondaryButton
-                  label="Edit"
-                  onPress={() =>
-                    router.push({
-                      pathname: "/habit-edit",
-                      params: { habitId: habit.id },
-                    })
-                  }
-                  style={styles.editButton}
-                />
-
-                <Pressable
-                  disabled={deletingId === habit.id}
-                  onPress={() => confirmDelete(habit)}
-                  style={({ pressed }) => [
-                    styles.deleteButton,
-                    pressed &&
-                      deletingId !== habit.id &&
-                      styles.deleteButtonPressed,
-                  ]}
-                >
-                  {deletingId === habit.id ? (
-                    <ActivityIndicator color={colors.danger} size="small" />
-                  ) : (
-                    <>
-                      <Ionicons
-                        color={colors.danger}
-                        name="trash-outline"
-                        size={16}
-                      />
-                      <Text style={styles.deleteText} variant="label">
-                        Delete
-                      </Text>
-                    </>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          ))}
+            );
+          })}
         </ScrollView>
       )}
     </ScreenContainer>
@@ -550,8 +707,19 @@ const styles = StyleSheet.create({
   },
   actionsRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  negativeActionsWrap: {
+    flex: 1,
+    gap: 8,
+  },
+  negativeHint: {
+    paddingHorizontal: 2,
+  },
+  negativeActionsRow: {
+    flexDirection: "row",
     gap: spacing.sm,
   },
   completeButton: {
@@ -577,7 +745,32 @@ const styles = StyleSheet.create({
   completeButtonPressed: {
     opacity: 0.82,
   },
+  negativeActionButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#CFE0FF",
+    backgroundColor: "#F8FBFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  negativeActionButtonSafe: {
+    borderColor: "#BEE8CC",
+    backgroundColor: "#F1FBF5",
+  },
+  negativeActionButtonDanger: {
+    borderColor: "#F5C2C7",
+    backgroundColor: "#FFF6F7",
+  },
   completeText: {
+    fontWeight: "700",
+  },
+  negativeDangerText: {
+    color: colors.danger,
     fontWeight: "700",
   },
   editButton: {

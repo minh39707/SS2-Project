@@ -23,8 +23,10 @@ import { getUserAnalytics } from "@/src/services/user.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
 
 const RANGE_OPTIONS = [
-  { label: "7D", value: 7 },
-  { label: "30D", value: 30 },
+  { label: "Day", value: "day" },
+  { label: "Week", value: "week" },
+  { label: "Month", value: "month" },
+  { label: "Year", value: "year" },
 ];
 
 const HEATMAP_COLORS = {
@@ -62,21 +64,28 @@ function getStatMetric(stats, label, fallbackValue = 0, fallbackMax = 0) {
   };
 }
 
-function buildFallbackAnalytics(days) {
+function buildFallbackAnalytics(period) {
   return {
     profile: null,
     range: {
-      days,
+      period,
+      days: period === "day" ? 1 : period === "year" ? 365 : period === "month" ? 30 : 7,
       startDate: null,
       endDate: null,
     },
     summary: {
       scheduledCount: 0,
+      successCount: 0,
       completedCount: 0,
       missedCount: 0,
+      punishedCount: 0,
+      avoidedCount: 0,
+      failedCount: 0,
+      unverifiedCount: 0,
       totalExpGained: 0,
       totalHpChange: 0,
       completionRate: 0,
+      avoidanceRate: 0,
       activeDays: 0,
       activeHabitCount: 0,
       activeGlobalStreak: 0,
@@ -84,6 +93,26 @@ function buildFallbackAnalytics(days) {
       dueTodayCount: 0,
       completedTodayCount: 0,
       remainingTodayCount: 0,
+      goodHabits: {
+        scheduledCount: 0,
+        completedCount: 0,
+        missedCount: 0,
+        punishedCount: 0,
+        completionRate: 0,
+        dueTodayCount: 0,
+        completedTodayCount: 0,
+        remainingTodayCount: 0,
+      },
+      badHabits: {
+        scheduledCount: 0,
+        avoidedCount: 0,
+        failedCount: 0,
+        unverifiedCount: 0,
+        avoidanceRate: 0,
+        dueTodayCount: 0,
+        avoidedTodayCount: 0,
+        unverifiedTodayCount: 0,
+      },
     },
     player: {
       level: 1,
@@ -102,6 +131,12 @@ function buildFallbackAnalytics(days) {
     categoryBreakdown: [],
     streakHabits: [],
   };
+}
+
+function buildFallbackAnalyticsMap() {
+  return Object.fromEntries(
+    RANGE_OPTIONS.map((option) => [option.value, buildFallbackAnalytics(option.value)]),
+  );
 }
 
 function getHeatmapCellStyle(day) {
@@ -226,13 +261,41 @@ export default function AnalyticsScreen() {
   const insets = useSafeAreaInsets();
   const { completed, hydrated } = useOnboarding();
   const heatmapScrollRef = useRef(null);
-  const [selectedRange, setSelectedRange] = useState(30);
-  const [analytics, setAnalytics] = useState(() => buildFallbackAnalytics(30));
+  const [selectedRanges, setSelectedRanges] = useState({
+    overview: "month",
+    weekday: "week",
+    category: "month",
+    completions: "month",
+  });
+  const [analyticsByPeriod, setAnalyticsByPeriod] = useState(() =>
+    buildFallbackAnalyticsMap(),
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const hasLoadedScreenRef = useRef(false);
   const isCompactLayout = width < 430;
+
+  const loadAnalyticsBundle = async (options = {}) => {
+    const results = await Promise.all(
+      RANGE_OPTIONS.map(async (option) => [
+        option.value,
+        await getUserAnalytics({
+          period: option.value,
+          forceRefresh: options.forceRefresh ?? false,
+        }),
+      ]),
+    );
+
+    return Object.fromEntries(results);
+  };
+
+  const setChartRange = (chartKey, period) => {
+    setSelectedRanges((currentRanges) => ({
+      ...currentRanges,
+      [chartKey]: period,
+    }));
+  };
 
   useEffect(() => {
     if (!hydrated) {
@@ -254,8 +317,8 @@ export default function AnalyticsScreen() {
       }
 
       try {
-        const result = await getUserAnalytics({ days: selectedRange });
-        setAnalytics(result);
+        const results = await loadAnalyticsBundle();
+        setAnalyticsByPeriod(results);
         hasLoadedScreenRef.current = true;
         setLoadError(null);
       } catch (error) {
@@ -270,10 +333,24 @@ export default function AnalyticsScreen() {
     };
 
     void loadAnalytics();
-  }, [completed, hydrated, isFocused, selectedRange]);
+  }, [completed, hydrated, isFocused]);
+
+  const heatmapAnalytics = analyticsByPeriod.year ?? buildFallbackAnalytics("year");
+  const overviewAnalytics =
+    analyticsByPeriod[selectedRanges.overview] ??
+    buildFallbackAnalytics(selectedRanges.overview);
+  const weekdayAnalytics =
+    analyticsByPeriod[selectedRanges.weekday] ??
+    buildFallbackAnalytics(selectedRanges.weekday);
+  const categoryAnalytics =
+    analyticsByPeriod[selectedRanges.category] ??
+    buildFallbackAnalytics(selectedRanges.category);
+  const completionAnalytics =
+    analyticsByPeriod[selectedRanges.completions] ??
+    buildFallbackAnalytics(selectedRanges.completions);
 
   useEffect(() => {
-    if (!heatmapWeeksHaveData(analytics?.activityHeatmap?.weeks)) {
+    if (!heatmapWeeksHaveData(heatmapAnalytics?.activityHeatmap?.weeks)) {
       return;
     }
 
@@ -282,17 +359,14 @@ export default function AnalyticsScreen() {
     }, 0);
 
     return () => clearTimeout(timeoutId);
-  }, [analytics?.activityHeatmap?.weeks, selectedRange]);
+  }, [heatmapAnalytics?.activityHeatmap?.weeks]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
 
     try {
-      const result = await getUserAnalytics({
-        days: selectedRange,
-        forceRefresh: true,
-      });
-      setAnalytics(result);
+      const results = await loadAnalyticsBundle({ forceRefresh: true });
+      setAnalyticsByPeriod(results);
       setLoadError(null);
     } catch (error) {
       setLoadError(
@@ -326,29 +400,30 @@ export default function AnalyticsScreen() {
     );
   }
 
-  const summary = analytics?.summary ?? {};
-  const player = analytics?.player ?? {};
-  const stats = analytics?.stats ?? [];
-  const heatmapWeeks = analytics?.activityHeatmap?.weeks ?? [];
-  const heatmapLegend = (analytics?.activityHeatmap?.legend ?? []).map((item) => ({
+  const summary = overviewAnalytics?.summary ?? {};
+  const goodSummary = summary?.goodHabits ?? {};
+  const badSummary = summary?.badHabits ?? {};
+  const player = overviewAnalytics?.player ?? {};
+  const stats = overviewAnalytics?.stats ?? [];
+  const heatmapWeeks = heatmapAnalytics?.activityHeatmap?.weeks ?? [];
+  const heatmapLegend = (heatmapAnalytics?.activityHeatmap?.legend ?? []).map((item) => ({
     ...item,
     label: normalizeLegendLabel(item?.label ?? ""),
   }));
-  const weekdayBreakdown = (analytics?.weekdayBreakdown ?? []).map((item) => ({
+  const weekdayBreakdown = (weekdayAnalytics?.weekdayBreakdown ?? []).map((item) => ({
     ...item,
     label: normalizeWeekdayLabel(item?.label ?? ""),
   }));
-  const categoryBreakdown = (analytics?.categoryBreakdown ?? []).map((item) => ({
+  const categoryBreakdown = (categoryAnalytics?.categoryBreakdown ?? []).map((item) => ({
     ...item,
     label: normalizeCategoryLabel(item?.label ?? ""),
   }));
-  const streakHabits = analytics?.streakHabits ?? [];
-  const hpMetric = getStatMetric(
-    stats,
-    "HP",
-    player?.currentHp ?? 0,
-    player?.maxHp ?? 100,
-  );
+  const streakHabits =
+    analyticsByPeriod.year?.streakHabits ??
+    analyticsByPeriod.month?.streakHabits ??
+    overviewAnalytics?.streakHabits ??
+    [];
+  const topHabits = completionAnalytics?.topHabits ?? [];
   const expMetric = getStatMetric(
     stats,
     "EXP",
@@ -357,12 +432,44 @@ export default function AnalyticsScreen() {
   );
 
   const maxWeekdayCount = Math.max(
-    ...weekdayBreakdown.map((item) => item.completedCount ?? 0),
+    ...weekdayBreakdown.map((item) => item.successCount ?? item.completedCount ?? 0),
     1,
   );
   const maxStreakCount = Math.max(
     ...streakHabits.map((habit) => habit.currentStreak ?? 0),
     1,
+  );
+  const maxCompletionCount = Math.max(
+    ...topHabits.map((habit) => habit.successCount ?? 0),
+    1,
+  );
+
+  const renderRangeSelector = (selectedRange, onSelectRange) => (
+    <View style={[styles.rangeRow, isCompactLayout && styles.rangeRowWrap]}>
+      {RANGE_OPTIONS.map((option) => {
+        const selected = selectedRange === option.value;
+
+        return (
+          <Pressable
+            key={option.value}
+            onPress={() => onSelectRange(option.value)}
+            style={({ pressed }) => [
+              styles.rangePill,
+              selected && styles.rangePillSelected,
+              pressed && !selected && styles.rangePillPressed,
+            ]}
+          >
+            <Text
+              color={selected ? "white" : "muted"}
+              style={styles.rangePillText}
+              variant="label"
+            >
+              {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 
   return (
@@ -386,31 +493,9 @@ export default function AnalyticsScreen() {
       <Animated.View entering={FadeInDown.duration(320)}>
         <Card style={styles.heroCard}>
           <View style={styles.controlsRow}>
-            <View style={styles.rangeRow}>
-              {RANGE_OPTIONS.map((option) => {
-                const selected = selectedRange === option.value;
-
-                return (
-                  <Pressable
-                    key={option.value}
-                    onPress={() => setSelectedRange(option.value)}
-                    style={({ pressed }) => [
-                      styles.rangePill,
-                      selected && styles.rangePillSelected,
-                      pressed && !selected && styles.rangePillPressed,
-                    ]}
-                  >
-                    <Text
-                      color={selected ? "white" : "muted"}
-                      style={styles.rangePillText}
-                      variant="label"
-                    >
-                      {option.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            {renderRangeSelector(selectedRanges.overview, (period) =>
+              setChartRange("overview", period),
+            )}
 
             <Pressable
               disabled={isRefreshing}
@@ -447,31 +532,37 @@ export default function AnalyticsScreen() {
                 +{summary.totalExpGained ?? 0} EXP
               </Text>
             </View>
+            <View style={styles.quickStatPill}>
+              <Ionicons color="#B45309" name="shield-checkmark" size={14} />
+              <Text style={styles.quickStatText} variant="label">
+                {Math.round((badSummary.avoidanceRate ?? 0) * 100)}% avoid
+              </Text>
+            </View>
           </View>
 
           <View style={styles.summaryStrip}>
             <View style={styles.summaryStripItem}>
               <Text color="muted" variant="caption">
-                Completion
+                Good habits ({selectedRanges.overview})
               </Text>
               <Text style={styles.summaryStripValue} variant="subtitle">
-                {Math.round((summary?.completionRate ?? 0) * 100)}%
+                {Math.round((goodSummary?.completionRate ?? 0) * 100)}%
               </Text>
             </View>
             <View style={styles.summaryStripDivider} />
             <View style={styles.summaryStripItem}>
               <Text color="muted" variant="caption">
-                HP
+                Bad habits ({selectedRanges.overview})
               </Text>
               <Text style={styles.summaryStripValue} variant="subtitle">
-                {hpMetric.value}/{hpMetric.max}
+                {Math.round((badSummary?.avoidanceRate ?? 0) * 100)}%
               </Text>
             </View>
             <View style={styles.summaryStripDivider} />
             <View style={styles.summaryStripItem}>
-              <Text color="muted" variant="caption">
-                EXP
-              </Text>
+                <Text color="muted" variant="caption">
+                  EXP ({selectedRanges.overview})
+                </Text>
               <Text style={styles.summaryStripValue} variant="subtitle">
                 {expMetric.value}/{expMetric.max}
               </Text>
@@ -483,14 +574,16 @@ export default function AnalyticsScreen() {
       <Animated.View entering={FadeInDown.duration(400).delay(40)}>
         <Card style={styles.heatmapCard}>
           <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
-            <Text style={styles.cardTitle} variant="subtitle">
-              ACTIVITY OVER THE PAST 26 WEEKS
-            </Text>
-            {!isCompactLayout ? (
-              <Text color="muted" variant="caption">
-                Contribution-style activity
+            <View style={styles.cardHeaderCopy}>
+              <Text style={styles.cardTitle} variant="subtitle">
+                ACTIVITY OVER THE PAST 26 WEEKS
               </Text>
-            ) : null}
+              {!isCompactLayout ? (
+                <Text color="muted" variant="caption">
+                  Contribution-style activity
+                </Text>
+              ) : null}
+            </View>
           </View>
 
           {heatmapWeeks.length > 0 ? (
@@ -568,14 +661,19 @@ export default function AnalyticsScreen() {
       >
         <Card style={[styles.halfCard, isCompactLayout && styles.fullCard]}>
           <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
-            <Text style={styles.cardTitle} variant="subtitle">
-              BY DAY OF WEEK
-            </Text>
-            {!isCompactLayout ? (
-              <Text color="muted" variant="caption">
-                Selected range
+            <View style={styles.cardHeaderCopy}>
+              <Text style={styles.cardTitle} variant="subtitle">
+                BY DAY OF WEEK
               </Text>
-            ) : null}
+              {!isCompactLayout ? (
+                <Text color="muted" variant="caption">
+                  Successful check-ins
+                </Text>
+              ) : null}
+            </View>
+            {renderRangeSelector(selectedRanges.weekday, (period) =>
+              setChartRange("weekday", period),
+            )}
           </View>
 
           <View style={styles.weekdayChart}>
@@ -587,8 +685,8 @@ export default function AnalyticsScreen() {
                       styles.weekdayBar,
                       {
                         height: `${Math.max(
-                          ((day.completedCount ?? 0) / maxWeekdayCount) * 100,
-                          day.completedCount ? 14 : 6,
+                          ((day.successCount ?? day.completedCount ?? 0) / maxWeekdayCount) * 100,
+                          (day.successCount ?? day.completedCount) ? 14 : 6,
                         )}%`,
                         backgroundColor: day.color,
                       },
@@ -605,14 +703,19 @@ export default function AnalyticsScreen() {
 
         <Card style={[styles.halfCard, isCompactLayout && styles.fullCard]}>
           <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
-            <Text style={styles.cardTitle} variant="subtitle">
-              BY CATEGORY
-            </Text>
-            {!isCompactLayout ? (
-              <Text color="muted" variant="caption">
-                Completed habit share
+            <View style={styles.cardHeaderCopy}>
+              <Text style={styles.cardTitle} variant="subtitle">
+                BY CATEGORY
               </Text>
-            ) : null}
+              {!isCompactLayout ? (
+                <Text color="muted" variant="caption">
+                  Successful log share
+                </Text>
+              ) : null}
+            </View>
+            {renderRangeSelector(selectedRanges.category, (period) =>
+              setChartRange("category", period),
+            )}
           </View>
 
           {categoryBreakdown.length > 0 ? (
@@ -662,7 +765,79 @@ export default function AnalyticsScreen() {
 
       <Animated.View entering={FadeInDown.duration(480).delay(100)}>
         <Card style={styles.streakCard}>
-          <View style={styles.cardHeader}>
+          <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
+            <View style={styles.cardHeaderCopy}>
+              <Text style={styles.cardTitle} variant="subtitle">
+                HABIT COMPLETIONS
+              </Text>
+              <Text color="muted" variant="caption">
+                Successful check-ins for each habit in the selected period
+              </Text>
+            </View>
+            {renderRangeSelector(selectedRanges.completions, (period) =>
+              setChartRange("completions", period),
+            )}
+          </View>
+
+          {topHabits.length > 0 ? (
+            <View style={styles.streakList}>
+              {topHabits.map((habit) => {
+                const habitCount =
+                  habit.habitType === "negative"
+                    ? habit.avoidedCount ?? habit.successCount ?? 0
+                    : habit.completedCount ?? habit.successCount ?? 0;
+
+                return (
+                  <View key={habit.id} style={styles.streakRow}>
+                    <View style={styles.streakTitleWrap}>
+                      <Text numberOfLines={1} variant="body">
+                        {formatHabitTitle(habit.title)}
+                      </Text>
+                      <Text color="muted" variant="caption">
+                        {habit.habitType === "negative"
+                          ? "Avoided in period"
+                          : "Completed in period"}
+                      </Text>
+                    </View>
+
+                    <View style={styles.streakBarWrap}>
+                      <View style={styles.streakBarTrack}>
+                        <View
+                          style={[
+                            styles.streakBarFill,
+                            {
+                              width: `${Math.max(
+                                (habitCount / maxCompletionCount) * 100,
+                                habitCount > 0 ? 12 : 0,
+                              )}%`,
+                              backgroundColor:
+                                habit.habitType === "negative" ? "#B45309" : colors.primary,
+                            },
+                          ]}
+                        />
+                      </View>
+                    </View>
+
+                    <View style={styles.completionValueWrap}>
+                      <Text style={styles.streakValue} variant="label">
+                        {habitCount}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : (
+            <Text color="muted" variant="body">
+              Complete a few habits in this period to populate the chart.
+            </Text>
+          )}
+        </Card>
+      </Animated.View>
+
+      <Animated.View entering={FadeInDown.duration(520).delay(120)}>
+        <Card style={styles.streakCard}>
+          <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
             <View style={styles.cardHeaderCopy}>
               <Text style={styles.cardTitle} variant="subtitle">
                 HABIT STREAKS
@@ -670,9 +845,6 @@ export default function AnalyticsScreen() {
               <Text color="muted" variant="caption">
                 Per habit, based on its own schedule
               </Text>
-            </View>
-            <View style={styles.arrowBadge}>
-              <Ionicons color="#64748B" name="arrow-down" size={18} />
             </View>
           </View>
 
@@ -714,7 +886,7 @@ export default function AnalyticsScreen() {
             </View>
           ) : (
             <Text color="muted" variant="body">
-              Build a few consecutive completions to see your streak board here.
+              Build a few consecutive successful days to see your streak board here.
             </Text>
           )}
         </Card>
@@ -767,6 +939,9 @@ const styles = StyleSheet.create({
   rangeRow: {
     flexDirection: "row",
     gap: 8,
+  },
+  rangeRowWrap: {
+    flexWrap: "wrap",
   },
   rangePill: {
     minWidth: 62,
@@ -859,6 +1034,11 @@ const styles = StyleSheet.create({
   },
   cardHeaderStack: {
     flexDirection: "column",
+  },
+  cardHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
   },
   cardTitle: {
     color: "#44403C",
@@ -1097,6 +1277,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     gap: 2,
+  },
+  completionValueWrap: {
+    width: 36,
+    alignItems: "flex-end",
+    justifyContent: "center",
   },
   streakValue: {
     color: "#27272A",

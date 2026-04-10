@@ -1,5 +1,6 @@
 const express = require("express");
 const { supabase } = require("../supabase");
+const { buildVersionedAvatarUrl } = require("../utils/avatarUrl");
 
 const router = express.Router();
 const DEFAULT_CHARACTER_CLASS = "Novice";
@@ -63,11 +64,13 @@ async function buildUniqueUsername(baseValue, excludeUserId = null) {
 }
 
 function buildUserResponse(user, profile = null, fallbackName = null) {
+  const avatarVersion = profile?.updated_at ?? profile?.created_at ?? null;
+
   return {
     id: user.id,
     email: user.email,
     name: profile?.username ?? fallbackName ?? user.email?.split("@")[0] ?? "Player",
-    avatarUrl: profile?.avatar_url ?? null,
+    avatarUrl: buildVersionedAvatarUrl(profile?.avatar_url, avatarVersion),
   };
 }
 
@@ -148,7 +151,7 @@ router.post("/email/sign-in", async (req, res) => {
     // Fetch user details for frontend payload
     const { data: profile } = await supabase
       .from("users")
-      .select("username, avatar_url")
+      .select("username, avatar_url, created_at, updated_at")
       .eq("user_id", data.user.id)
       .single();
 
@@ -195,7 +198,7 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
     const { data: existingByUserId, error: existingByUserIdError } =
       await supabase
         .from("users")
-        .select("user_id, email, username, avatar_url")
+        .select("user_id, email, username, avatar_url, created_at, updated_at")
         .eq("user_id", userId)
         .maybeSingle();
 

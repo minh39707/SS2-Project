@@ -7,12 +7,22 @@ const {
   toFrequencyDayNumbers,
 } = require("../utils/frequencyDays");
 const {
+  addDays,
   applyCharacterProgress,
   buildHabitProgressMap,
   calculateHabitStreak,
+  getHabitStartDate,
   isHabitScheduledOnDate,
   toDateKey,
 } = require("../utils/habitProgress");
+const {
+  getHabitType,
+  isAllowedStatusForHabit,
+  isNegativeHabit,
+  isPositiveHabit,
+  isSuccessStatus,
+  isSuccessfulLogForHabit,
+} = require("../utils/habitStatus");
 
 const router = express.Router();
 
@@ -192,7 +202,7 @@ function normalizePayload(body) {
     normalizedFrequencyType,
     normalizedDays,
     normalizedTargetValue,
-    habitType: body?.habitType === "negative" ? "negative" : "positive",
+    habitType: getHabitType({ habitType: body?.habitType }),
     targetUnit: typeof body?.targetUnit === "string" ? body.targetUnit : "times",
     preferredTime,
     categoryLabel: typeof body?.categoryLabel === "string" ? body.categoryLabel : null,
@@ -268,7 +278,7 @@ function serializeHabit(habit, categoryMap, progress = {}) {
   return {
     id: habit.habit_id,
     title: habit.title,
-    habitType: habit.habit_type,
+    habitType: getHabitType(habit),
     targetValue: Number(habit.target_value ?? 1),
     targetUnit: habit.target_unit ?? "times",
     frequencyType: habit.frequency_type ?? "daily",
@@ -282,6 +292,8 @@ function serializeHabit(habit, categoryMap, progress = {}) {
     createdAt: habit.created_at,
     updatedAt: habit.updated_at,
     completedToday: progress.completedToday ?? false,
+    loggedToday: progress.loggedToday ?? false,
+    todayStatus: progress.todayStatus ?? null,
     currentStreak: progress.currentStreak ?? 0,
     bestStreak: progress.bestStreak ?? 0,
     lastCompletedAt: progress.lastCompletedAt ?? null,
@@ -359,14 +371,240 @@ async function fetchHabitCompletionContext(userId, habitId, dateKey) {
   };
 }
 
-function getCompletedDateKeys(logs = [], excludedLogId = null) {
+function getSuccessfulDateKeys(habit, logs = [], excludedLogId = null) {
   return logs
     .filter(
       (log) =>
         log.log_id !== excludedLogId &&
-        (!log.status || log.status === "completed"),
+        isSuccessfulLogForHabit(habit, log),
     )
-    .map((log) => log.log_date);
+    .map((log) => toDateKey(log.log_date));
+}
+
+function buildHabitLogEffects(habit, status, nextStreak) {
+  if (isPositiveHabit(habit)) {
+    if (status === "completed") {
+      return {
+        expChange:
+          Number(habit.exp_reward ?? 0) +
+          (nextStreak.currentStreak > 1
+            ? Number(habit.streak_bonus_exp ?? 0)
+            : 0),
+        hpChange: Number(habit.hp_reward ?? 0),
+        streakAtLog: nextStreak.currentStreak,
+      };
+    }
+
+    if (status === "punished") {
+      return {
+        expChange: 0,
+        hpChange: -Number(habit.hp_penalty ?? 0),
+        streakAtLog: 0,
+      };
+    }
+
+    return {
+      expChange: 0,
+      hpChange: 0,
+      streakAtLog: 0,
+    };
+  }
+
+  if (status === "avoided") {
+    return {
+      expChange: Number(habit.exp_reward ?? 0),
+      hpChange: 0,
+      streakAtLog: nextStreak.currentStreak,
+    };
+  }
+
+  return {
+    expChange: 0,
+    hpChange: -Number(habit.hp_penalty ?? 0),
+    streakAtLog: 0,
+  };
+}
+
+async function persistHabitStatus({
+  userId,
+  habit,
+  character,
+  existingLogs,
+  todayLog,
+  dateKey,
+  status,
+  manualOnly = true,
+}) {
+  if (!isHabitScheduledOnDate(habit, dateKey)) {
+    const error = new Error("This habit is not scheduled for today.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!isAllowedStatusForHabit(habit, status, { manualOnly })) {
+    const error = new Error("This status is not allowed for this habit.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const successfulDateKeys = getSuccessfulDateKeys(
+    habit,
+    existingLogs,
+    todayLog?.log_id ?? null,
+  );
+  const nextSuccessfulDateKeys = isSuccessStatus(status)
+    ? [...successfulDateKeys, dateKey]
+    : successfulDateKeys;
+  const nextStreak = calculateHabitStreak(
+    habit,
+    nextSuccessfulDateKeys,
+    dateKey,
+  );
+  const { expChange, hpChange, streakAtLog } = buildHabitLogEffects(
+    habit,
+    status,
+    nextStreak,
+  );
+  const characterDelta = {
+    exp: expChange - Number(todayLog?.exp_change ?? 0),
+    hp: hpChange - Number(todayLog?.hp_change ?? 0),
+  };
+  const payload = {
+    habit_id: habit.habit_id,
+    user_id: userId,
+    log_date: dateKey,
+    status,
+    value_recorded: Number(habit.target_value ?? 1),
+    hp_change: hpChange,
+    exp_change: expChange,
+    streak_at_log: streakAtLog,
+    source: "manual",
+  };
+
+  let savedLog = null;
+
+  if (todayLog?.log_id) {
+    const { data, error } = await supabase
+      .from("habit_logs")
+      .update(payload)
+      .eq("log_id", todayLog.log_id)
+      .select("log_id")
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    savedLog = data;
+  } else {
+    const { data, error } = await supabase
+      .from("habit_logs")
+      .insert(payload)
+      .select("log_id")
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    savedLog = data;
+  }
+
+  await Promise.all([
+    syncHabitStreakRecord(userId, habit.habit_id, nextStreak),
+    updateCharacterProgress(
+      userId,
+      character.character_id,
+      applyCharacterProgress(
+        character,
+        characterDelta.exp,
+        characterDelta.hp,
+      ),
+    ),
+  ]);
+
+  return {
+    logId: savedLog?.log_id ?? todayLog?.log_id ?? null,
+    nextStreak,
+    rewards: {
+      exp: characterDelta.exp,
+      hp: characterDelta.hp,
+    },
+    progress: {
+      completedToday: isSuccessStatus(status),
+      loggedToday: true,
+      todayStatus: status,
+      currentStreak: nextStreak.currentStreak,
+      bestStreak: nextStreak.bestStreak,
+      lastCompletedAt: nextStreak.lastCompletedAt,
+      isScheduledToday: true,
+    },
+  };
+}
+
+async function clearTodayHabitStatus({
+  userId,
+  habit,
+  character,
+  existingLogs,
+  todayLog,
+  dateKey,
+}) {
+  if (!todayLog?.log_id) {
+    return {
+      rewards: { exp: 0, hp: 0 },
+      progress: buildHabitProgressMap([habit], existingLogs, dateKey).get(habit.habit_id),
+    };
+  }
+
+  const { error } = await supabase
+    .from("habit_logs")
+    .delete()
+    .eq("log_id", todayLog.log_id);
+
+  if (error) {
+    throw error;
+  }
+
+  const remainingSuccessfulDateKeys = getSuccessfulDateKeys(
+    habit,
+    existingLogs,
+    todayLog.log_id,
+  );
+  const nextStreak = calculateHabitStreak(
+    habit,
+    remainingSuccessfulDateKeys,
+    dateKey,
+  );
+
+  await Promise.all([
+    syncHabitStreakRecord(userId, habit.habit_id, nextStreak),
+    updateCharacterProgress(
+      userId,
+      character.character_id,
+      applyCharacterProgress(
+        character,
+        -Number(todayLog.exp_change ?? 0),
+        -Number(todayLog.hp_change ?? 0),
+      ),
+    ),
+  ]);
+
+  return {
+    rewards: {
+      exp: -Number(todayLog.exp_change ?? 0),
+      hp: -Number(todayLog.hp_change ?? 0),
+    },
+    progress: {
+      completedToday: false,
+      loggedToday: false,
+      todayStatus: isNegativeHabit(habit) ? "unverified" : null,
+      currentStreak: nextStreak.currentStreak,
+      bestStreak: nextStreak.bestStreak,
+      lastCompletedAt: nextStreak.lastCompletedAt,
+      isScheduledToday: isHabitScheduledOnDate(habit, dateKey),
+    },
+  };
 }
 
 function buildProgressResponse(habit, categoryMap, progress, rewards = { exp: 0, hp: 0 }) {
@@ -461,6 +699,102 @@ async function updateCharacterProgress(userId, characterId, payload) {
   }
 }
 
+async function applyOverduePunishmentsForUser(userId, throughDateKey = addDays(toDateKey(), -1)) {
+  if (throughDateKey < "0001-01-01") {
+    return { appliedCount: 0, totalHpPenalty: 0 };
+  }
+
+  const [{ data: habits, error: habitsError }, character, logs] = await Promise.all([
+    supabase
+      .from("habits")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("habit_type", "positive")
+      .eq("frequency_type", "daily")
+      .eq("is_active", true),
+    fetchCharacter(userId),
+    fetchHabitLogs(userId),
+  ]);
+
+  if (habitsError) {
+    throw habitsError;
+  }
+
+  const existingLogKeys = new Set(
+    logs.map((log) => `${log.habit_id}:${toDateKey(log.log_date)}`),
+  );
+  const pendingLogs = [];
+  let totalHpPenalty = 0;
+
+  for (const habit of habits ?? []) {
+    let cursor = getHabitStartDate(habit);
+
+    while (cursor <= throughDateKey) {
+      const logKey = `${habit.habit_id}:${cursor}`;
+
+      if (!existingLogKeys.has(logKey) && isHabitScheduledOnDate(habit, cursor)) {
+        const hpPenalty = Number(habit.hp_penalty ?? 0);
+
+        pendingLogs.push({
+          habit_id: habit.habit_id,
+          user_id: userId,
+          log_date: cursor,
+          status: "punished",
+          value_recorded: Number(habit.target_value ?? 1),
+          hp_change: -hpPenalty,
+          exp_change: 0,
+          streak_at_log: 0,
+        });
+        totalHpPenalty += hpPenalty;
+        existingLogKeys.add(logKey);
+      }
+
+      cursor = addDays(cursor, 1);
+    }
+  }
+
+  if (!pendingLogs.length) {
+    return { appliedCount: 0, totalHpPenalty: 0 };
+  }
+
+  const { error: insertError } = await supabase
+    .from("habit_logs")
+    .insert(pendingLogs);
+
+  if (insertError) {
+    throw insertError;
+  }
+
+  if (totalHpPenalty > 0) {
+    await updateCharacterProgress(
+      userId,
+      character.character_id,
+      applyCharacterProgress(character, 0, -totalHpPenalty),
+    );
+  }
+
+  const allLogs = [...logs, ...pendingLogs];
+
+  await Promise.all(
+    (habits ?? []).map((habit) =>
+      syncHabitStreakRecord(
+        userId,
+        habit.habit_id,
+        calculateHabitStreak(
+          habit,
+          getSuccessfulDateKeys(habit, allLogs),
+          toDateKey(),
+        ),
+      ),
+    ),
+  );
+
+  return {
+    appliedCount: pendingLogs.length,
+    totalHpPenalty,
+  };
+}
+
 router.get("/", requireUser, async (req, res) => {
   try {
     const [categoryMap, habitsResult, logs] = await Promise.all([
@@ -514,6 +848,32 @@ router.get("/:habitId", requireUser, async (req, res) => {
   }
 });
 
+router.post("/apply-overdue-punishments", requireUser, async (req, res) => {
+  try {
+    const requestedThroughDate =
+      typeof req.body?.throughDate === "string" ? req.body.throughDate : null;
+    const throughDateKey =
+      requestedThroughDate && requestedThroughDate < toDateKey()
+        ? requestedThroughDate
+        : addDays(toDateKey(), -1);
+    const result = await applyOverduePunishmentsForUser(
+      req.userId,
+      throughDateKey,
+    );
+
+    return res.json({
+      appliedCount: result.appliedCount,
+      totalHpPenalty: result.totalHpPenalty,
+      throughDate: throughDateKey,
+    });
+  } catch (error) {
+    console.error("Apply overdue punishments error:", error);
+    return res.status(500).json({
+      message: error?.message ?? "Internal server error.",
+    });
+  }
+});
+
 router.post("/:habitId/complete", requireUser, async (req, res) => {
   try {
     const todayDateKey = toDateKey();
@@ -528,75 +888,35 @@ router.post("/:habitId/complete", requireUser, async (req, res) => {
       return res.status(404).json({ message: HABIT_NOT_FOUND_MESSAGE });
     }
 
-    if (!isHabitScheduledOnDate(habit, todayDateKey)) {
-      return res.status(400).json({
-        message: "This habit is not scheduled for today.",
-      });
-    }
+    const nextStatus = isNegativeHabit(habit) ? "avoided" : "completed";
 
-    if (todayLog && (!todayLog.status || todayLog.status === "completed")) {
+    if (todayLog && (todayLog.status ?? "completed") === nextStatus) {
       return res.json(
         buildCurrentProgressResponse(habit, categoryMap, existingLogs, todayDateKey),
       );
     }
 
-    const completedDateKeys = getCompletedDateKeys(existingLogs);
-    const nextStreak = calculateHabitStreak(
+    const result = await persistHabitStatus({
+      userId: req.userId,
       habit,
-      [...completedDateKeys, todayDateKey],
-      todayDateKey,
-    );
-    const expChange =
-      Number(habit.exp_reward ?? 0) +
-      (nextStreak.currentStreak > 1 ? Number(habit.streak_bonus_exp ?? 0) : 0);
-    const hpChange = Number(habit.hp_reward ?? 0);
-
-    const { data: createdLog, error: createLogError } = await supabase
-      .from("habit_logs")
-      .insert({
-        habit_id: habit.habit_id,
-        user_id: req.userId,
-        log_date: todayDateKey,
-        status: "completed",
-        value_recorded: Number(habit.target_value ?? 1),
-        hp_change: hpChange,
-        exp_change: expChange,
-        streak_at_log: nextStreak.currentStreak,
-        source: "manual",
-      })
-      .select("log_id")
-      .single();
-
-    if (createLogError) {
-      console.error("Complete habit error:", createLogError);
-      return res.status(400).json({ message: createLogError.message });
-    }
-
-    await Promise.all([
-      syncHabitStreakRecord(req.userId, habit.habit_id, nextStreak),
-      updateCharacterProgress(
-        req.userId,
-        character.character_id,
-        applyCharacterProgress(character, expChange, hpChange),
-      ),
-    ]);
+      character,
+      existingLogs,
+      todayLog,
+      dateKey: todayDateKey,
+      status: nextStatus,
+    });
 
     return res.json(
-      buildProgressResponse(habit, categoryMap, {
-        completedToday: true,
-        currentStreak: nextStreak.currentStreak,
-        bestStreak: nextStreak.bestStreak,
-        lastCompletedAt: nextStreak.lastCompletedAt,
-        isScheduledToday: true,
-      }, {
-        exp: expChange,
-        hp: hpChange,
-        logId: createdLog?.log_id ?? null,
+      buildProgressResponse(habit, categoryMap, result.progress, {
+        ...result.rewards,
+        logId: result.logId,
       }),
     );
   } catch (error) {
     console.error("Complete habit error:", error);
-    return res.status(500).json({ message: "Internal server error." });
+    return res.status(error?.statusCode ?? 500).json({
+      message: error?.message ?? "Internal server error.",
+    });
   }
 });
 
@@ -614,53 +934,98 @@ router.delete("/:habitId/complete", requireUser, async (req, res) => {
       return res.status(404).json({ message: HABIT_NOT_FOUND_MESSAGE });
     }
 
-    if (!todayLog || (todayLog.status && todayLog.status !== "completed")) {
-      return res.json(
-        buildCurrentProgressResponse(habit, categoryMap, existingLogs, todayDateKey),
-      );
-    }
-
-    const { error: deleteLogError } = await supabase
-      .from("habit_logs")
-      .delete()
-      .eq("log_id", todayLog.log_id);
-
-    if (deleteLogError) {
-      console.error("Undo complete habit error:", deleteLogError);
-      return res.status(400).json({ message: deleteLogError.message });
-    }
-
-    const remainingDateKeys = getCompletedDateKeys(existingLogs, todayLog.log_id);
-    const nextStreak = calculateHabitStreak(habit, remainingDateKeys, todayDateKey);
-
-    await Promise.all([
-      syncHabitStreakRecord(req.userId, habit.habit_id, nextStreak),
-      updateCharacterProgress(
-        req.userId,
-        character.character_id,
-        applyCharacterProgress(
-          character,
-          -(todayLog.exp_change ?? 0),
-          -(todayLog.hp_change ?? 0),
-        ),
-      ),
-    ]);
+    const result = await clearTodayHabitStatus({
+      userId: req.userId,
+      habit,
+      character,
+      existingLogs,
+      todayLog,
+      dateKey: todayDateKey,
+    });
 
     return res.json(
-      buildProgressResponse(habit, categoryMap, {
-        completedToday: false,
-        currentStreak: nextStreak.currentStreak,
-        bestStreak: nextStreak.bestStreak,
-        lastCompletedAt: nextStreak.lastCompletedAt,
-        isScheduledToday: isHabitScheduledOnDate(habit, todayDateKey),
-      }, {
-        exp: -(todayLog.exp_change ?? 0),
-        hp: -(todayLog.hp_change ?? 0),
-      }),
+      buildProgressResponse(habit, categoryMap, result.progress, result.rewards),
     );
   } catch (error) {
     console.error("Undo complete habit error:", error);
-    return res.status(500).json({ message: "Internal server error." });
+    return res.status(error?.statusCode ?? 500).json({
+      message: error?.message ?? "Internal server error.",
+    });
+  }
+});
+
+router.post("/:habitId/status", requireUser, async (req, res) => {
+  try {
+    const todayDateKey = toDateKey();
+    const requestedStatus =
+      typeof req.body?.status === "string" ? req.body.status.trim().toLowerCase() : "";
+    const { categoryMap, habit, character, existingLogs, todayLog } =
+      await fetchHabitCompletionContext(
+        req.userId,
+        req.params.habitId,
+        todayDateKey,
+      );
+
+    if (!habit) {
+      return res.status(404).json({ message: HABIT_NOT_FOUND_MESSAGE });
+    }
+
+    const result = await persistHabitStatus({
+      userId: req.userId,
+      habit,
+      character,
+      existingLogs,
+      todayLog,
+      dateKey: todayDateKey,
+      status: requestedStatus,
+      manualOnly: true,
+    });
+
+    return res.json(
+      buildProgressResponse(habit, categoryMap, result.progress, {
+        ...result.rewards,
+        logId: result.logId,
+      }),
+    );
+  } catch (error) {
+    console.error("Update habit status error:", error);
+    return res.status(error?.statusCode ?? 500).json({
+      message: error?.message ?? "Internal server error.",
+    });
+  }
+});
+
+router.delete("/:habitId/status", requireUser, async (req, res) => {
+  try {
+    const todayDateKey = toDateKey();
+    const { categoryMap, habit, character, existingLogs, todayLog } =
+      await fetchHabitCompletionContext(
+        req.userId,
+        req.params.habitId,
+        todayDateKey,
+      );
+
+    if (!habit) {
+      return res.status(404).json({ message: HABIT_NOT_FOUND_MESSAGE });
+    }
+
+    const result = await clearTodayHabitStatus({
+      userId: req.userId,
+      habit,
+      character,
+      existingLogs,
+      todayLog,
+      dateKey: todayDateKey,
+    });
+
+    return res.json(
+      buildProgressResponse(habit, categoryMap, result.progress, result.rewards),
+    );
+  } catch (error) {
+    console.error("Clear habit status error:", error);
+    return res.status(error?.statusCode ?? 500).json({
+      message: error?.message ?? "Internal server error.",
+    });
   }
 });
 

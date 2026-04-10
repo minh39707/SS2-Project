@@ -10,6 +10,7 @@ const {
   calculateGlobalStreak,
   summarizeDailyProgress,
 } = require("../utils/habitProgress");
+const { getHabitType, isNegativeHabit, isSuccessStatus } = require("../utils/habitStatus");
 
 const router = express.Router();
 const ONBOARDING_DESCRIPTION_PREFIX = "Created during onboarding.";
@@ -62,43 +63,37 @@ function getDashboardHabitIcon(title) {
 }
 
 function buildQuickAction(habit, progress) {
+  const normalizedHabitType = getHabitType(habit);
+  const isBadHabit = normalizedHabitType === "negative";
+  const targetValue = Number(habit.target_value ?? 1);
+  const targetUnit = habit.target_unit ?? "times";
+
   return {
     id: habit.habit_id,
     title: habit.title,
     description: habit.target_value
-      ? `Target: ${habit.target_value} ${habit.target_unit ?? "times"}`
-      : "Daily goal",
-    targetValue: Number(habit.target_value ?? 1),
-    targetUnit: habit.target_unit ?? "times",
+      ? isBadHabit
+        ? `Limit: up to ${targetValue} ${targetUnit}`
+        : `Target: ${targetValue} ${targetUnit}`
+      : isBadHabit
+        ? "Stay under your limit"
+        : "Daily goal",
+    targetValue,
+    targetUnit,
+    habitType: normalizedHabitType,
     frequencyType: habit.frequency_type ?? "daily",
     frequencyDays: toFrequencyDayKeys(habit.frequency_days ?? []),
     color: "#3B82F6",
     tintColor: "#EDF5FF",
     icon: getDashboardHabitIcon(habit.title),
     completedToday: progress?.completedToday ?? false,
+    loggedToday: progress?.loggedToday ?? false,
+    todayStatus: progress?.todayStatus ?? null,
     currentStreak: progress?.currentStreak ?? 0,
     bestStreak: progress?.bestStreak ?? 0,
     isScheduledToday: progress?.isScheduledToday ?? false,
     expReward: Number(habit.exp_reward ?? 0),
     streakBonusExp: Number(habit.streak_bonus_exp ?? 0),
-  };
-}
-
-function buildGoodHabit(habit, progress) {
-  return {
-    id: habit.habit_id,
-    title: habit.title,
-    progressLabel: progress?.completedToday
-      ? "Completed today"
-      : progress?.isScheduledToday
-        ? "Due today"
-        : habit.frequency_type ?? "daily",
-    actionLabel: progress?.completedToday ? "Done" : "Ready today",
-    icon: "book",
-    iconColor: "#3B82F6",
-    iconBackground: "#EEF5FF",
-    actionTone: progress?.completedToday ? "success" : "primary",
-    currentStreak: progress?.currentStreak ?? 0,
   };
 }
 
@@ -132,18 +127,18 @@ router.get("/", requireUser, async (req, res) => {
     const normalizedHabits = normalizeHabitsForDashboard(habits);
     const progressMap = buildHabitProgressMap(normalizedHabits, recentLogs ?? []);
     const completedDateKeys = (recentLogs ?? [])
-      .filter((log) => !log.status || log.status === "completed")
+      .filter((log) => !log.status || isSuccessStatus(log.status))
       .map((log) => log.log_date);
     const { streak } = calculateGlobalStreak(completedDateKeys);
     const stats = buildStats(character, streak);
     const todayProgress = summarizeDailyProgress(normalizedHabits, progressMap);
 
-    // Quick actions from habits
-    const quickActions = normalizedHabits
+    const dashboardHabits = normalizedHabits
       .map((habit) => {
         const progress = progressMap.get(habit.habit_id);
         return buildQuickAction(habit, progress);
-      })
+      });
+    const quickActions = dashboardHabits
       .sort((leftHabit, rightHabit) => {
         const leftRank =
           (leftHabit.isScheduledToday ? 0 : 2) + (leftHabit.completedToday ? 1 : 0);
@@ -152,11 +147,8 @@ router.get("/", requireUser, async (req, res) => {
 
         return leftRank - rightRank;
       });
-
-    // Good habits list
-    const goodHabits = normalizedHabits.map((habit) =>
-      buildGoodHabit(habit, progressMap.get(habit.habit_id)),
-    );
+    const goodHabits = dashboardHabits.filter((habit) => !isNegativeHabit(habit));
+    const badHabits = dashboardHabits.filter((habit) => isNegativeHabit(habit));
 
     return res.json({
       resolvedUserId: req.userId,
@@ -171,7 +163,7 @@ router.get("/", requireUser, async (req, res) => {
       quickActions,
       calendarDays: buildWeekCalendar(normalizedHabits, recentLogs ?? []),
       goodHabits,
-      badHabits: [],
+      badHabits,
     });
   } catch (err) {
     console.error("Dashboard error:", err);
