@@ -798,8 +798,22 @@ export default function HomeScreen() {
 
       <Animated.View entering={FadeInDown.duration(400).delay(10)} style={styles.sectionBlock}>
         <Card style={styles.todayMissionCard}>
-          <View style={styles.todayMissionHeader}>
-            <View>
+          {hasAnyHabits && trackedMissionCount > 0 && completedMissionCount >= trackedMissionCount ? (
+            <View style={styles.allDoneWrap}>
+              <View style={styles.allDoneIcon}>
+                <Ionicons color={colors.success} name="checkmark-circle" size={56} />
+              </View>
+              <Text style={styles.allDoneTitle} variant="title">
+                You're all set!
+              </Text>
+              <Text color="muted" style={styles.allDoneText} variant="body">
+                You've completed all your scheduled routines for today. Great job!
+              </Text>
+            </View>
+          ) : (
+            <>
+              <View style={styles.todayMissionHeader}>
+                <View>
               <Text color="primary" variant="label">
                 Today&apos;s Mission
               </Text>
@@ -990,8 +1004,10 @@ export default function HomeScreen() {
               </Text>
             </Pressable>
           </View>
-        </Card>
-      </Animated.View>
+        </>
+      )}
+    </Card>
+  </Animated.View>
 
       {loadError ? (
         <Animated.View entering={FadeInDown.duration(420).delay(20)} style={styles.sectionBlock}>
@@ -1181,7 +1197,7 @@ const styles = StyleSheet.create({
   },
   content: {
     gap: spacing.lg,
-    paddingBottom: spacing.xxl * 2,
+    paddingBottom: spacing.xxl * 4,
   },
   sectionBlock: {
     gap: spacing.sm,
@@ -1339,6 +1355,23 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   todayMissionBody: {
+    lineHeight: 22,
+  },
+  allDoneWrap: {
+    alignItems: "center",
+    paddingVertical: spacing.md,
+    gap: spacing.sm,
+  },
+  allDoneIcon: {
+    marginBottom: spacing.xs,
+  },
+  allDoneTitle: {
+    fontSize: 24,
+    lineHeight: 30,
+    textAlign: "center",
+  },
+  allDoneText: {
+    textAlign: "center",
     lineHeight: 22,
   },
   missionError: {

@@ -211,7 +211,14 @@ function formatAnalyticsDate(dateValue) {
     return null;
   }
 
-  const parsedDate = new Date(`${dateValue}T00:00:00`);
+  // Safely parse YYYY-MM-DD locally to avoid React Native JSC/Hermes parsing NaN
+  const parts = dateValue.split("-").map(Number);
+  if (parts.length !== 3) {
+    return null;
+  }
+  
+  const [year, month, day] = parts;
+  const parsedDate = new Date(year, month - 1, day);
 
   if (Number.isNaN(parsedDate.getTime())) {
     return null;
@@ -907,6 +914,9 @@ export default function AnalyticsScreen() {
                   contentContainerStyle={styles.heatmapScrollContent}
                   horizontal
                   showsHorizontalScrollIndicator={false}
+                  onContentSizeChange={() => {
+                    heatmapScrollRef.current?.scrollToEnd({ animated: false });
+                  }}
                 >
                   <View style={styles.heatmapWeeksRow}>
                     {heatmapWeeks.map((week) => (

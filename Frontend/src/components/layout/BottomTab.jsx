@@ -137,9 +137,6 @@ export default function BottomTab({ state, navigation }) {
               </Pressable>
             </View>
 
-            <View style={styles.modalFabWrap}>
-              <FloatingButton onPress={closeFabMenu} />
-            </View>
           </View>
         </View>
       </Modal>
@@ -196,7 +193,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.md,
     paddingHorizontal: 24,
-    marginBottom: 34,
+    marginBottom: 100,
   },
   menuCard: {
     flex: 1,

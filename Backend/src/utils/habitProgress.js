@@ -2,6 +2,7 @@ const {
   deriveTodayStatus,
   isSuccessStatus,
   isSuccessfulLogForHabit,
+  isPositiveHabit,
 } = require("./habitStatus");
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -321,7 +322,7 @@ function buildWeekCalendar(habits = [], logs = [], todayDateKey = toDateKey()) {
     const isSelected = dateKey === todayDateKey;
     const hasCompletedHabit = completedDateSet.has(dateKey);
     const hasScheduledHabit = habits.some((habit) =>
-      isHabitScheduledOnDate(habit, dateKey),
+      isPositiveHabit(habit) && isHabitScheduledOnDate(habit, dateKey),
     );
 
     let status = "empty";
@@ -347,7 +348,7 @@ function buildWeekCalendar(habits = [], logs = [], todayDateKey = toDateKey()) {
 
 function summarizeDailyProgress(habits = [], progressMap, todayDateKey = toDateKey()) {
   const scheduledHabits = habits.filter((habit) =>
-    isHabitScheduledOnDate(habit, todayDateKey),
+    isPositiveHabit(habit) && isHabitScheduledOnDate(habit, todayDateKey),
   );
   const completedCount = scheduledHabits.filter(
     (habit) => progressMap.get(habit.habit_id)?.completedToday,
