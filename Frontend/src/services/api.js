@@ -3,16 +3,13 @@ import { Platform } from "react-native";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
 const FALLBACK_REQUEST_TIMEOUT_MS = 4000;
-const HEALTHCHECK_TIMEOUT_MS = 3500;
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 const configuredApiHost = process.env.EXPO_PUBLIC_API_HOST?.trim();
 const configuredApiPort = process.env.EXPO_PUBLIC_API_PORT?.trim() || "4000";
 const configuredApiScheme =
   process.env.EXPO_PUBLIC_API_SCHEME?.trim() || "http";
 
-console.log('[api] env config:', { configuredApiUrl, configuredApiHost, configuredApiPort, configuredApiScheme });
 let preferredApiBaseUrl = null;
-let resolvingApiBaseUrlPromise = null;
 
 export async function simulateRequest(payload, delay = 180) {
   await new Promise((resolve) => setTimeout(resolve, delay));
@@ -212,66 +209,6 @@ async function performRequest(
   return parsedBody;
 }
 
-async function probeApiBaseUrl(baseUrl) {
-  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
-
-  if (!normalizedBaseUrl) {
-    return false;
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), HEALTHCHECK_TIMEOUT_MS);
-
-  try {
-    console.log(`[api] probing ${normalizedBaseUrl}/health ...`);
-    const response = await fetch(`${normalizedBaseUrl}/health`, {
-      method: "GET",
-      signal: controller.signal,
-    });
-
-    console.log(`[api] probe ${normalizedBaseUrl} -> ${response.ok ? 'OK' : response.status}`);
-    return response.ok;
-  } catch (err) {
-    console.log(`[api] probe ${normalizedBaseUrl} -> FAILED (${err.message})`);
-    return false;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-async function resolveApiBaseUrl(forceRefresh = false) {
-  const candidates = getOrderedCandidateBaseUrls();
-
-  if (!forceRefresh && preferredApiBaseUrl && candidates.includes(preferredApiBaseUrl)) {
-    return preferredApiBaseUrl;
-  }
-
-  if (!forceRefresh && resolvingApiBaseUrlPromise) {
-    return resolvingApiBaseUrlPromise;
-  }
-
-  resolvingApiBaseUrlPromise = (async () => {
-    console.log('[api] resolving base URL from candidates:', candidates);
-    for (const baseUrl of candidates) {
-      if (await probeApiBaseUrl(baseUrl)) {
-        console.log('[api] ✓ resolved to:', baseUrl);
-        preferredApiBaseUrl = baseUrl;
-        return baseUrl;
-      }
-    }
-
-    preferredApiBaseUrl = candidates[0] ?? getFallbackApiBaseUrls()[0];
-    console.log('[api] ✗ no healthy candidate, defaulting to:', preferredApiBaseUrl);
-    return preferredApiBaseUrl;
-  })();
-
-  try {
-    return await resolvingApiBaseUrlPromise;
-  } finally {
-    resolvingApiBaseUrlPromise = null;
-  }
-}
-
 export async function apiRequest(path, options = {}) {
   const {
     apiBaseUrl,
@@ -284,18 +221,17 @@ export async function apiRequest(path, options = {}) {
   } = options;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const explicitBaseUrl = normalizeBaseUrl(apiBaseUrl);
-  const resolvedBaseUrl = explicitBaseUrl ?? (await resolveApiBaseUrl());
-  const baseUrls = explicitBaseUrl
-    ? [explicitBaseUrl]
-    : getOrderedCandidateBaseUrls(resolvedBaseUrl);
+  const baseUrls = explicitBaseUrl ? [explicitBaseUrl] : getOrderedCandidateBaseUrls();
 
   let lastError = null;
 
   for (let index = 0; index < baseUrls.length; index += 1) {
     const baseUrl = baseUrls[index];
     const attemptTimeoutMs =
-      index === 0
-        ? timeoutMs
+      explicitBaseUrl || preferredApiBaseUrl
+        ? index === 0
+          ? timeoutMs
+          : Math.min(timeoutMs, FALLBACK_REQUEST_TIMEOUT_MS)
         : Math.min(timeoutMs, FALLBACK_REQUEST_TIMEOUT_MS);
 
     try {

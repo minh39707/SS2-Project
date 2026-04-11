@@ -40,6 +40,22 @@ export function invalidateCachedResources(keys) {
   }
 }
 
+export function invalidateCachedResourcesByPrefix(prefixes) {
+  const normalizedPrefixes = Array.isArray(prefixes)
+    ? prefixes.filter((prefix) => typeof prefix === "string" && prefix.length > 0)
+    : [];
+
+  if (normalizedPrefixes.length === 0) {
+    return;
+  }
+
+  for (const key of resourceCache.keys()) {
+    if (normalizedPrefixes.some((prefix) => key.startsWith(prefix))) {
+      resourceCache.delete(key);
+    }
+  }
+}
+
 export function clearResourceCache() {
   resourceCache.clear();
 }

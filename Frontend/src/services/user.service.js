@@ -1,6 +1,9 @@
 import { colors } from "@/src/constants/colors";
 import { apiRequest } from "@/src/services/api";
-import { loadOnboardingState } from "@/src/services/onboardingStorage";
+import {
+  loadOnboardingState,
+  peekOnboardingState,
+} from "@/src/services/onboardingStorage";
 import {
   loadCachedResource,
   setCachedResource,
@@ -10,6 +13,10 @@ const USER_PROFILE_CACHE_TTL_MS = 60_000;
 const USER_STATS_CACHE_TTL_MS = 45_000;
 const USER_ANALYTICS_CACHE_TTL_MS = 45_000;
 
+function getCurrentCalendarYear() {
+  return new Date().getFullYear();
+}
+
 function getCurrentUserCacheKey(userId) {
   return `user-profile:${userId ?? "guest"}`;
 }
@@ -18,12 +25,16 @@ function getUserStatsCacheKey(userId) {
   return `user-stats:${userId ?? "guest"}`;
 }
 
-function getUserAnalyticsCacheKey(userId, period = "week") {
+function getUserAnalyticsCacheKey(userId, period = "week", year = null) {
+  if (period === "year") {
+    return `user-analytics:${userId ?? "guest"}:${period}:${year ?? getCurrentCalendarYear()}`;
+  }
+
   return `user-analytics:${userId ?? "guest"}:${period}`;
 }
 
 async function loadUserServiceContext() {
-  const persistedState = await loadOnboardingState();
+  const persistedState = peekOnboardingState() ?? (await loadOnboardingState());
   const userProfile = persistedState?.userProfile ?? null;
 
   return {
@@ -91,6 +102,7 @@ function buildFallbackAnalytics(persistedState, period = "week") {
       days: period === "day" ? 1 : period === "year" ? 365 : period === "month" ? 30 : 7,
       startDate: null,
       endDate: null,
+      ...(period === "year" ? { year: getCurrentCalendarYear() } : {}),
     },
     summary: {
       scheduledCount: 0,
@@ -144,6 +156,10 @@ function buildFallbackAnalytics(persistedState, period = "week") {
     stats,
     activityHeatmap: {
       weeks: [],
+      selectedYear: getCurrentCalendarYear(),
+      availableYears: [getCurrentCalendarYear()],
+      startDate: null,
+      endDate: null,
       legend: [],
     },
     weekdayBreakdown: [],
@@ -308,7 +324,15 @@ export async function getUserAnalytics(options = {}) {
           : Number.isFinite(options.days) && Number(options.days) === 1
             ? "day"
             : "week";
-  const cacheKey = getUserAnalyticsCacheKey(userProfile?.id, normalizedPeriod);
+  const selectedYear =
+    normalizedPeriod === "year"
+      ? Number.parseInt(options.year, 10) || getCurrentCalendarYear()
+      : null;
+  const cacheKey = getUserAnalyticsCacheKey(
+    userProfile?.id,
+    normalizedPeriod,
+    selectedYear,
+  );
 
   if (!userProfile?.id) {
     return setCachedResource(
@@ -322,7 +346,7 @@ export async function getUserAnalytics(options = {}) {
     cacheKey,
     async () => {
       const response = await apiRequest(
-        `/users/me/analytics?period=${normalizedPeriod}`,
+        `/users/me/analytics?period=${normalizedPeriod}${selectedYear ? `&year=${selectedYear}` : ""}`,
         {
         method: "GET",
         userId: userProfile.id,

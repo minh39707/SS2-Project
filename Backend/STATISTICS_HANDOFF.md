@@ -48,7 +48,7 @@ Source:
 - characters
 - global streak derived from habit logs
 
-### `GET /api/users/me/analytics?days=7|30|...`
+### `GET /api/users/me/analytics?period=week|month|year`
 
 Purpose:
 
@@ -68,6 +68,12 @@ Source:
 - habit categories
 - characters
 - users profile
+
+Query behavior:
+
+- `period=day|week|month|year` returns the current calendar window for that period
+- `days=<1-90>` returns a rolling trailing window ending today
+- frontend currently uses `period`
 
 ## 3. Database Tables That Actually Matter
 
@@ -355,11 +361,12 @@ Main sections:
 - `generatedAt`
 - `source`
 
-The `days` query is normalized:
+The analytics range query is normalized:
 
-- default `7`
-- minimum `1`
-- maximum `90`
+- `period` is used as-is when valid
+- otherwise `days` defaults to `7`
+- `days` minimum is `1`
+- `days` maximum is `90`
 
 ## 6. Analytics Breakdown Definitions
 

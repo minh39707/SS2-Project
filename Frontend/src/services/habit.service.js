@@ -1,7 +1,12 @@
 import { colors } from "@/src/constants/colors";
 import { apiRequest } from "@/src/services/api";
-import { loadOnboardingState } from "@/src/services/onboardingStorage";
+import { syncHabitNotificationsForUser } from "@/src/services/habitNotifications";
 import {
+  loadOnboardingState,
+  peekOnboardingState,
+} from "@/src/services/onboardingStorage";
+import {
+  invalidateCachedResourcesByPrefix,
   invalidateCachedResources,
   loadCachedResource,
   setCachedResource,
@@ -48,6 +53,10 @@ function getHabitCacheKeys(userId, habitId = null) {
 
 export function invalidateHabitCaches(userId, habitId = null) {
   invalidateCachedResources(getHabitCacheKeys(userId, habitId));
+
+  if (userId) {
+    invalidateCachedResourcesByPrefix([`user-analytics:${userId}:`]);
+  }
 }
 
 function buildMonthLabel() {
@@ -162,8 +171,12 @@ function assertResolvedUserMatches(response, expectedUserId) {
   }
 }
 
+async function loadPersistedStateSnapshot() {
+  return peekOnboardingState() ?? loadOnboardingState();
+}
+
 async function resolveAuthenticatedProfile(profileOverride = null) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = profileOverride ?? persistedState?.userProfile ?? null;
 
   return {
@@ -216,7 +229,7 @@ export async function getDashboardData(options = {}) {
 }
 
 export async function createHabit(payload, profileOverride = null) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = profileOverride ?? persistedState?.userProfile ?? null;
 
   if (!userProfile?.id) {
@@ -230,12 +243,17 @@ export async function createHabit(payload, profileOverride = null) {
     body: payload,
   });
 
+  await syncHabitNotificationsForUser({
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+    requestPermissions: true,
+  });
   invalidateHabitCaches(userProfile.id);
   return response;
 }
 
 export async function listHabits(profileOverride = null, options = {}) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
   const cacheKey = getHabitsListCacheKey(userProfile.id);
 
@@ -255,7 +273,7 @@ export async function listHabits(profileOverride = null, options = {}) {
 }
 
 export async function getHabitById(habitId, profileOverride = null, options = {}) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
   const cacheKey = getHabitDetailCacheKey(userProfile.id, habitId);
 
@@ -275,7 +293,7 @@ export async function getHabitById(habitId, profileOverride = null, options = {}
 }
 
 export async function updateHabit(habitId, payload, profileOverride = null) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
   const response = await apiRequest(`/habits/${habitId}`, {
     method: "PATCH",
@@ -284,12 +302,17 @@ export async function updateHabit(habitId, payload, profileOverride = null) {
     body: payload,
   });
 
+  await syncHabitNotificationsForUser({
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+    requestPermissions: true,
+  });
   invalidateHabitCaches(userProfile.id, habitId);
   return response;
 }
 
 export async function deleteHabit(habitId, profileOverride = null) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
   const response = await apiRequest(`/habits/${habitId}`, {
     method: "DELETE",
@@ -297,12 +320,17 @@ export async function deleteHabit(habitId, profileOverride = null) {
     authToken: userProfile.accessToken,
   });
 
+  await syncHabitNotificationsForUser({
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+    requestPermissions: true,
+  });
   invalidateHabitCaches(userProfile.id, habitId);
   return response;
 }
 
 export async function completeHabit(habitId, profileOverride = null) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
   const response = await apiRequest(`/habits/${habitId}/complete`, {
     method: "POST",
@@ -315,7 +343,7 @@ export async function completeHabit(habitId, profileOverride = null) {
 }
 
 export async function uncompleteHabit(habitId, profileOverride = null) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
   const response = await apiRequest(`/habits/${habitId}/complete`, {
     method: "DELETE",
@@ -328,7 +356,7 @@ export async function uncompleteHabit(habitId, profileOverride = null) {
 }
 
 export async function setHabitStatus(habitId, status, profileOverride = null) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
   const response = await apiRequest(`/habits/${habitId}/status`, {
     method: "POST",
@@ -342,7 +370,7 @@ export async function setHabitStatus(habitId, status, profileOverride = null) {
 }
 
 export async function clearHabitStatus(habitId, profileOverride = null) {
-  const persistedState = await loadOnboardingState();
+  const persistedState = await loadPersistedStateSnapshot();
   const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
   const response = await apiRequest(`/habits/${habitId}/status`, {
     method: "DELETE",

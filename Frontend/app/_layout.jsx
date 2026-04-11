@@ -1,5 +1,7 @@
+import { useEffect, useRef } from "react";
 import { DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import * as Notifications from "expo-notifications";
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { colors } from '@/src/constants/colors';
@@ -16,6 +18,30 @@ const navigationTheme = {
     },
 };
 export default function RootLayout() {
+    const router = useRouter();
+    const lastNotificationResponse = Notifications.useLastNotificationResponse();
+    const lastHandledNotificationIdRef = useRef(null);
+
+    useEffect(() => {
+        const notificationId = lastNotificationResponse?.notification?.request?.identifier ?? null;
+        const url = lastNotificationResponse?.notification?.request?.content?.data?.url;
+        const actionIdentifier = lastNotificationResponse?.actionIdentifier;
+
+        if (
+            actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER ||
+            !notificationId ||
+            lastHandledNotificationIdRef.current === notificationId
+        ) {
+            return;
+        }
+
+        lastHandledNotificationIdRef.current = notificationId;
+
+        if (typeof url === "string") {
+            router.replace(url);
+        }
+    }, [lastNotificationResponse, router]);
+
     return (<OnboardingProvider>
       <ThemeProvider value={navigationTheme}>
         <Stack screenOptions={{ headerShown: false }}>

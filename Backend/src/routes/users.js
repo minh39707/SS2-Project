@@ -319,7 +319,7 @@ router.get('/me/stats', requireUser, async (req, res) => {
     ]);
     const { data: character } = characterResult;
     const completedDateKeys = (logsResult.data ?? [])
-      .filter((log) => !log.status || isSuccessStatus(log.status))
+      .filter((log) => isSuccessStatus(log?.status))
       .map((log) => log.log_date);
     const { streak } = calculateGlobalStreak(completedDateKeys);
 
@@ -364,6 +364,7 @@ router.get('/me/analytics', requireUser, async (req, res) => {
       categoryLabels,
       days: req.query?.days,
       period: req.query?.period,
+      year: req.query?.year,
     });
 
     return res.json({

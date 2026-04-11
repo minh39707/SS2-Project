@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused, useNavigation } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -31,7 +31,7 @@ const RANGE_OPTIONS = [
 ];
 
 const HEATMAP_COLORS = {
-  0: "#F3F4EE",
+  0: "#E8E2D6",
   1: "#D8E9AF",
   2: "#AAD45F",
   3: "#6DAA22",
@@ -47,6 +47,16 @@ const HEATMAP_DAY_GUIDES = [
   { label: "Sat", row: 5 },
   { label: "Sun", row: 6 },
 ];
+
+const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+function getCurrentCalendarYear() {
+  return new Date().getFullYear();
+}
 
 function formatHabitTitle(title = "") {
   return String(title)
@@ -141,18 +151,20 @@ function buildFallbackAnalyticsMap() {
 }
 
 function getHeatmapCellStyle(day) {
+  if (!day?.isInRange) {
+    return {
+      backgroundColor: "#F7F3EB",
+      borderColor: "#EEE8DC",
+      opacity: 0.55,
+    };
+  }
+
   const baseColor = HEATMAP_COLORS[day?.intensity ?? 0] ?? HEATMAP_COLORS[0];
 
   return {
     backgroundColor: baseColor,
     borderColor: day?.isToday ? "#1D4ED8" : baseColor,
   };
-}
-
-function heatmapWeeksHaveData(weeks = []) {
-  return weeks.some((week) =>
-    week?.days?.some((day) => (day?.completedCount ?? 0) > 0),
-  );
 }
 
 function normalizeWeekdayLabel(label = "") {
@@ -186,6 +198,37 @@ function normalizeLegendLabel(label = "") {
 
 function normalizeCategoryLabel(label = "") {
   return String(label).trim().toLowerCase() === "khac" ? "Other" : label;
+}
+
+function heatmapHasSuccessData(weeks = []) {
+  return weeks.some((week) =>
+    week?.days?.some((day) => (day?.successCount ?? 0) > 0),
+  );
+}
+
+function formatAnalyticsDate(dateValue) {
+  if (!dateValue) {
+    return null;
+  }
+
+  const parsedDate = new Date(`${dateValue}T00:00:00`);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return LONG_DATE_FORMATTER.format(parsedDate);
+}
+
+function formatHeatmapDateRange(activityHeatmap = {}) {
+  const formattedStartDate = formatAnalyticsDate(activityHeatmap?.startDate);
+  const formattedEndDate = formatAnalyticsDate(activityHeatmap?.endDate);
+
+  if (formattedStartDate && formattedEndDate) {
+    return `${formattedStartDate} - ${formattedEndDate}`;
+  }
+
+  return "From the start of the selected year to the latest tracked day";
 }
 
 function WeekdayLineChart({ data, maxCount }) {
@@ -363,6 +406,7 @@ export default function AnalyticsScreen() {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { completed, hydrated } = useOnboarding();
+  const currentCalendarYear = getCurrentCalendarYear();
   const heatmapScrollRef = useRef(null);
   const scrollViewRef = useRef(null);
   const [selectedRanges, setSelectedRanges] = useState({
@@ -374,15 +418,18 @@ export default function AnalyticsScreen() {
   const [analyticsByPeriod, setAnalyticsByPeriod] = useState(() =>
     buildFallbackAnalyticsMap(),
   );
+  const [heatmapAnalyticsByYear, setHeatmapAnalyticsByYear] = useState({});
+  const [selectedHeatmapYear, setSelectedHeatmapYear] = useState(currentCalendarYear);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isHeatmapYearLoading, setIsHeatmapYearLoading] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [isCompletionsExpanded, setIsCompletionsExpanded] = useState(false);
   const [isStreaksExpanded, setIsStreaksExpanded] = useState(false);
   const hasLoadedScreenRef = useRef(false);
   const isCompactLayout = width < 430;
 
-  const loadAnalyticsBundle = async (options = {}) => {
+  const loadAnalyticsBundle = useCallback(async (options = {}) => {
     const results = await Promise.all(
       RANGE_OPTIONS.map(async (option) => [
         option.value,
@@ -394,7 +441,7 @@ export default function AnalyticsScreen() {
     );
 
     return Object.fromEntries(results);
-  };
+  }, []);
 
   const setChartRange = (chartKey, period) => {
     setSelectedRanges((currentRanges) => ({
@@ -425,6 +472,20 @@ export default function AnalyticsScreen() {
       try {
         const results = await loadAnalyticsBundle();
         setAnalyticsByPeriod(results);
+        const resolvedHeatmapYear =
+          results?.year?.activityHeatmap?.selectedYear ?? currentCalendarYear;
+        setHeatmapAnalyticsByYear((currentCache) => ({
+          ...currentCache,
+          [resolvedHeatmapYear]: results.year,
+        }));
+        setSelectedHeatmapYear((currentYear) => {
+          const availableYears =
+            results?.year?.activityHeatmap?.availableYears ?? [resolvedHeatmapYear];
+
+          return availableYears.includes(currentYear)
+            ? currentYear
+            : resolvedHeatmapYear;
+        });
         hasLoadedScreenRef.current = true;
         setLoadError(null);
       } catch (error) {
@@ -439,9 +500,15 @@ export default function AnalyticsScreen() {
     };
 
     void loadAnalytics();
-  }, [completed, hydrated, isFocused]);
+  }, [completed, currentCalendarYear, hydrated, isFocused, loadAnalyticsBundle]);
 
-  const heatmapAnalytics = analyticsByPeriod.year ?? buildFallbackAnalytics("year");
+  const currentYearAnalytics = analyticsByPeriod.year ?? buildFallbackAnalytics("year");
+  const heatmapAnalytics =
+    heatmapAnalyticsByYear[selectedHeatmapYear] ??
+    (selectedHeatmapYear ===
+    (currentYearAnalytics?.activityHeatmap?.selectedYear ?? currentCalendarYear)
+      ? currentYearAnalytics
+      : null);
   const overviewAnalytics =
     analyticsByPeriod[selectedRanges.overview] ??
     buildFallbackAnalytics(selectedRanges.overview);
@@ -456,23 +523,101 @@ export default function AnalyticsScreen() {
     buildFallbackAnalytics(selectedRanges.completions);
 
   useEffect(() => {
-    if (!heatmapWeeksHaveData(heatmapAnalytics?.activityHeatmap?.weeks)) {
+    if (
+      !hydrated ||
+      !completed ||
+      !isFocused ||
+      !selectedHeatmapYear ||
+      heatmapAnalyticsByYear[selectedHeatmapYear]
+    ) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadHeatmapYear = async () => {
+      setIsHeatmapYearLoading(true);
+
+      try {
+        const analytics = await getUserAnalytics({
+          period: "year",
+          year: selectedHeatmapYear,
+        });
+
+        if (isCancelled) {
+          return;
+        }
+
+        setHeatmapAnalyticsByYear((currentCache) => ({
+          ...currentCache,
+          [selectedHeatmapYear]: analytics,
+        }));
+      } catch (error) {
+        if (!isCancelled) {
+          setLoadError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load the selected heatmap year right now.",
+          );
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsHeatmapYearLoading(false);
+        }
+      }
+    };
+
+    void loadHeatmapYear();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    completed,
+    heatmapAnalyticsByYear,
+    hydrated,
+    isFocused,
+    selectedHeatmapYear,
+  ]);
+
+  useEffect(() => {
+    if (!heatmapAnalytics?.activityHeatmap?.weeks?.length) {
       return;
     }
 
     const timeoutId = setTimeout(() => {
-      heatmapScrollRef.current?.scrollToEnd({ animated: false });
+      heatmapScrollRef.current?.scrollTo({ x: 0, animated: false });
     }, 0);
 
     return () => clearTimeout(timeoutId);
-  }, [heatmapAnalytics?.activityHeatmap?.weeks]);
+  }, [heatmapAnalytics?.activityHeatmap?.selectedYear, heatmapAnalytics?.activityHeatmap?.weeks]);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
 
     try {
       const results = await loadAnalyticsBundle({ forceRefresh: true });
+      const resolvedHeatmapYear =
+        results?.year?.activityHeatmap?.selectedYear ?? currentCalendarYear;
       setAnalyticsByPeriod(results);
+      setHeatmapAnalyticsByYear((currentCache) => ({
+        ...currentCache,
+        [resolvedHeatmapYear]: results.year,
+      }));
+
+      if (selectedHeatmapYear && selectedHeatmapYear !== resolvedHeatmapYear) {
+        const selectedYearAnalytics = await getUserAnalytics({
+          period: "year",
+          year: selectedHeatmapYear,
+          forceRefresh: true,
+        });
+
+        setHeatmapAnalyticsByYear((currentCache) => ({
+          ...currentCache,
+          [selectedHeatmapYear]: selectedYearAnalytics,
+        }));
+      }
+
       setLoadError(null);
     } catch (error) {
       setLoadError(
@@ -483,7 +628,7 @@ export default function AnalyticsScreen() {
     } finally {
       setIsRefreshing(false);
     }
-  };
+  }, [currentCalendarYear, loadAnalyticsBundle, selectedHeatmapYear]);
 
   useEffect(() => {
     const unsubscribe = navigation.addListener("tabPress", (e) => {
@@ -494,7 +639,7 @@ export default function AnalyticsScreen() {
       }
     });
     return unsubscribe;
-  }, [navigation, isFocused]);
+  }, [handleRefresh, isFocused, navigation]);
 
   if (!hydrated || (completed && isLoading && !hasLoadedScreenRef.current)) {
     return (
@@ -522,7 +667,14 @@ export default function AnalyticsScreen() {
   const badSummary = summary?.badHabits ?? {};
   const player = overviewAnalytics?.player ?? {};
   const stats = overviewAnalytics?.stats ?? [];
+  const heatmapYears = [...new Set([
+    ...(currentYearAnalytics?.activityHeatmap?.availableYears ?? []),
+    ...(heatmapAnalytics?.activityHeatmap?.availableYears ?? []),
+    currentCalendarYear,
+  ])].sort((leftYear, rightYear) => rightYear - leftYear);
   const heatmapWeeks = heatmapAnalytics?.activityHeatmap?.weeks ?? [];
+  const hasHeatmapSuccessData = heatmapHasSuccessData(heatmapWeeks);
+  const heatmapRangeLabel = formatHeatmapDateRange(heatmapAnalytics?.activityHeatmap);
   const heatmapLegend = (heatmapAnalytics?.activityHeatmap?.legend ?? []).map((item) => ({
     ...item,
     label: normalizeLegendLabel(item?.label ?? ""),
@@ -585,6 +737,34 @@ export default function AnalyticsScreen() {
               variant="label"
             >
               {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+
+  const renderHeatmapYearSelector = () => (
+    <View style={[styles.yearSelectorRow, isCompactLayout && styles.rangeRowWrap]}>
+      {heatmapYears.map((year) => {
+        const selected = selectedHeatmapYear === year;
+
+        return (
+          <Pressable
+            key={year}
+            onPress={() => setSelectedHeatmapYear(year)}
+            style={({ pressed }) => [
+              styles.yearPill,
+              selected && styles.yearPillSelected,
+              pressed && !selected && styles.rangePillPressed,
+            ]}
+          >
+            <Text
+              color={selected ? "white" : "muted"}
+              style={styles.rangePillText}
+              variant="label"
+            >
+              {year}
             </Text>
           </Pressable>
         );
@@ -690,17 +870,23 @@ export default function AnalyticsScreen() {
           <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
             <View style={styles.cardHeaderCopy}>
               <Text style={styles.cardTitle} variant="subtitle">
-                ACTIVITY OVER THE PAST 26 WEEKS
+                YEARLY ACTIVITY MAP
               </Text>
-              {!isCompactLayout ? (
-                <Text color="muted" variant="caption">
-                  Contribution-style activity
-                </Text>
-              ) : null}
+              <Text color="muted" variant="caption">
+                {heatmapRangeLabel}
+              </Text>
             </View>
+            {renderHeatmapYearSelector()}
           </View>
 
-          {heatmapWeeks.length > 0 ? (
+          {isHeatmapYearLoading && !heatmapAnalytics ? (
+            <View style={styles.heatmapLoadingWrap}>
+              <ActivityIndicator color={colors.primary} size="small" />
+              <Text color="muted" variant="body">
+                Loading year {selectedHeatmapYear}...
+              </Text>
+            </View>
+          ) : heatmapWeeks.length > 0 ? (
             <>
               <View style={styles.heatmapBody}>
                 <View style={styles.heatmapYAxis}>
@@ -739,7 +925,7 @@ export default function AnalyticsScreen() {
 
               <View style={styles.heatmapFooter}>
                 <Text color="muted" style={styles.heatmapFootnote} variant="caption">
-                  Darker cells mean more completed habits on that day.
+                  Darker cells mean more successful habits on that day. Empty faded cells are outside the selected year range.
                 </Text>
 
                 <View style={styles.heatmapLegendRow}>
@@ -760,6 +946,15 @@ export default function AnalyticsScreen() {
                   ))}
                 </View>
               </View>
+
+              {!hasHeatmapSuccessData ? (
+                <View style={styles.heatmapEmptyNotice}>
+                  <Ionicons color={colors.primary} name="sparkles-outline" size={16} />
+                  <Text color="muted" style={styles.heatmapEmptyNoticeText} variant="caption">
+                    No successful habit days have been recorded for {selectedHeatmapYear} yet.
+                  </Text>
+                </View>
+              ) : null}
             </>
           ) : (
             <Text color="muted" variant="body">
@@ -1177,6 +1372,27 @@ const styles = StyleSheet.create({
     gap: 10,
     alignItems: "flex-start",
   },
+  yearSelectorRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  yearPill: {
+    minWidth: 72,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#D7DCD0",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  yearPillSelected: {
+    backgroundColor: "#315F12",
+    borderColor: "#315F12",
+  },
   heatmapYAxis: {
     width: 34,
     gap: 4,
@@ -1203,6 +1419,11 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1,
   },
+  heatmapLoadingWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
   heatmapFooter: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1213,6 +1434,20 @@ const styles = StyleSheet.create({
   heatmapFootnote: {
     flex: 1,
     minWidth: 180,
+  },
+  heatmapEmptyNotice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: 16,
+    backgroundColor: "#F4F8EF",
+    borderWidth: 1,
+    borderColor: "#DCEAC8",
+  },
+  heatmapEmptyNoticeText: {
+    flex: 1,
   },
   heatmapLegendRow: {
     flexDirection: "row",

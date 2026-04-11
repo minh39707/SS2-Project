@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -90,6 +90,7 @@ export default function ManageHabitsScreen() {
   const [error, setError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
+  const hasLoadedHabitsRef = useRef(false);
 
   useEffect(() => {
     if (!completed || !userProfile?.id || !isFocused) {
@@ -98,17 +99,22 @@ export default function ManageHabitsScreen() {
     }
 
     let isMounted = true;
+    const profileOverride = {
+      id: userProfile.id,
+      accessToken: userProfile.accessToken,
+    };
 
     const fetchHabits = async () => {
-      if (!habits.length) {
+      if (!hasLoadedHabitsRef.current) {
         setIsLoading(true);
       }
 
       try {
-        const response = await listHabits(userProfile);
+        const response = await listHabits(profileOverride);
 
         if (isMounted) {
           setHabits(response?.habits ?? []);
+          hasLoadedHabitsRef.current = true;
           setError(null);
         }
       } catch (loadError) {
@@ -132,18 +138,33 @@ export default function ManageHabitsScreen() {
     return () => {
       isMounted = false;
     };
-  }, [completed, habits.length, isFocused, userProfile]);
+  }, [completed, isFocused, userProfile?.accessToken, userProfile?.id]);
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    router.replace("/(tabs)");
+  };
 
   const handleRefresh = async () => {
     if (!userProfile?.id) {
       return;
     }
 
+    const profileOverride = {
+      id: userProfile.id,
+      accessToken: userProfile.accessToken,
+    };
+
     setIsRefreshing(true);
 
     try {
-      const response = await listHabits(userProfile, { forceRefresh: true });
+      const response = await listHabits(profileOverride, { forceRefresh: true });
       setHabits(response?.habits ?? []);
+      hasLoadedHabitsRef.current = true;
       setError(null);
     } catch (refreshError) {
       setError(
@@ -288,7 +309,7 @@ export default function ManageHabitsScreen() {
     >
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={handleBack}
           style={({ pressed }) => [
             styles.headerIcon,
             pressed && styles.headerIconPressed,
@@ -481,6 +502,7 @@ export default function ManageHabitsScreen() {
                               <Text
                                 color={isAvoided ? "success" : "primary"}
                                 style={styles.completeText}
+                                numberOfLines={1}
                                 variant="label"
                               >
                                 Avoided today
@@ -516,6 +538,7 @@ export default function ManageHabitsScreen() {
                                   styles.completeText,
                                   isFailed && styles.negativeDangerText,
                                 ]}
+                                numberOfLines={1}
                                 variant="label"
                               >
                                 I slipped
@@ -531,6 +554,7 @@ export default function ManageHabitsScreen() {
                       onPress={() => void handleToggleComplete(habit)}
                       style={({ pressed }) => [
                         styles.completeButton,
+                        styles.primaryActionButton,
                         habit.completedToday && styles.completeButtonDone,
                         !habit.isScheduledToday && styles.completeButtonDisabled,
                         pressed &&
@@ -551,6 +575,7 @@ export default function ManageHabitsScreen() {
                           <Text
                             color={habit.completedToday ? "success" : "primary"}
                             style={styles.completeText}
+                            numberOfLines={1}
                             variant="label"
                           >
                             {getHabitActionLabel(habit)}
@@ -560,42 +585,44 @@ export default function ManageHabitsScreen() {
                     </Pressable>
                   )}
 
-                  <SecondaryButton
-                    label="Edit"
-                    onPress={() =>
-                      router.push({
-                        pathname: "/habit-edit",
-                        params: { habitId: habit.id },
-                      })
-                    }
-                    style={styles.editButton}
-                  />
+                  <View style={styles.secondaryActionsRow}>
+                    <SecondaryButton
+                      label="Edit"
+                      onPress={() =>
+                        router.push({
+                          pathname: "/habit-edit",
+                          params: { habitId: habit.id },
+                        })
+                      }
+                      style={styles.editButton}
+                    />
 
-                  <Pressable
-                    disabled={deletingId === habit.id}
-                    onPress={() => confirmDelete(habit)}
-                    style={({ pressed }) => [
-                      styles.deleteButton,
-                      pressed &&
-                        deletingId !== habit.id &&
-                        styles.deleteButtonPressed,
-                    ]}
-                  >
-                    {deletingId === habit.id ? (
-                      <ActivityIndicator color={colors.danger} size="small" />
-                    ) : (
-                      <>
-                        <Ionicons
-                          color={colors.danger}
-                          name="trash-outline"
-                          size={16}
-                        />
-                        <Text style={styles.deleteText} variant="label">
-                          Delete
-                        </Text>
-                      </>
-                    )}
-                  </Pressable>
+                    <Pressable
+                      disabled={deletingId === habit.id}
+                      onPress={() => confirmDelete(habit)}
+                      style={({ pressed }) => [
+                        styles.deleteButton,
+                        pressed &&
+                          deletingId !== habit.id &&
+                          styles.deleteButtonPressed,
+                      ]}
+                    >
+                      {deletingId === habit.id ? (
+                        <ActivityIndicator color={colors.danger} size="small" />
+                      ) : (
+                        <>
+                          <Ionicons
+                            color={colors.danger}
+                            name="trash-outline"
+                            size={16}
+                          />
+                          <Text numberOfLines={1} style={styles.deleteText} variant="label">
+                            Delete
+                          </Text>
+                        </>
+                      )}
+                    </Pressable>
+                  </View>
                 </View>
               </View>
             );
@@ -706,13 +733,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#EAF2FF",
   },
   actionsRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
+    width: "100%",
     gap: spacing.sm,
   },
   negativeActionsWrap: {
-    flex: 1,
+    width: "100%",
     gap: 8,
   },
   negativeHint: {
@@ -721,6 +746,9 @@ const styles = StyleSheet.create({
   negativeActionsRow: {
     flexDirection: "row",
     gap: spacing.sm,
+  },
+  primaryActionButton: {
+    width: "100%",
   },
   completeButton: {
     flex: 1,
@@ -773,6 +801,10 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontWeight: "700",
   },
+  secondaryActionsRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
   editButton: {
     flex: 1,
     minHeight: 48,
@@ -781,7 +813,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   deleteButton: {
-    minWidth: 112,
+    flex: 1,
+    minWidth: 0,
     minHeight: 48,
     borderRadius: radii.pill,
     borderWidth: 1,

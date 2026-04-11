@@ -17,6 +17,7 @@ import {
   signOutAccount,
   signUpWithEmail,
 } from "@/src/services/onboardingApi";
+import { clearManagedHabitNotifications } from "@/src/services/habitNotifications";
 import {
   getOnboardingScope,
   loadCurrentOnboardingScope,
@@ -351,6 +352,12 @@ export function OnboardingProvider({ children }) {
     }
   };
   const resetOnboarding = async () => {
+    const currentUserId = persistedState.userProfile?.id ?? null;
+
+    if (currentUserId) {
+      await clearManagedHabitNotifications(currentUserId);
+    }
+
     try {
       await signOutAccount();
     } catch (error) {

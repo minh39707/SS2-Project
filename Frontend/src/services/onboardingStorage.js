@@ -70,10 +70,23 @@ export async function loadCurrentOnboardingScope() {
   return envelope.currentScope ?? GUEST_SCOPE;
 }
 
+export function peekCurrentOnboardingScope() {
+  return cachedEnvelope?.currentScope ?? GUEST_SCOPE;
+}
+
 export async function loadOnboardingState(scope = null) {
   const envelope = await readEnvelope();
   const resolvedScope = scope ?? envelope.currentScope ?? GUEST_SCOPE;
   return envelope.scopes?.[resolvedScope] ?? null;
+}
+
+export function peekOnboardingState(scope = null) {
+  if (!cachedEnvelope) {
+    return null;
+  }
+
+  const resolvedScope = scope ?? cachedEnvelope.currentScope ?? GUEST_SCOPE;
+  return cachedEnvelope.scopes?.[resolvedScope] ?? null;
 }
 
 export async function saveOnboardingState(state, scope = null) {

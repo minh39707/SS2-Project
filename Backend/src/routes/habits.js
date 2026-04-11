@@ -890,7 +890,7 @@ router.post("/:habitId/complete", requireUser, async (req, res) => {
 
     const nextStatus = isNegativeHabit(habit) ? "avoided" : "completed";
 
-    if (todayLog && (todayLog.status ?? "completed") === nextStatus) {
+    if (todayLog?.status === nextStatus) {
       return res.json(
         buildCurrentProgressResponse(habit, categoryMap, existingLogs, todayDateKey),
       );

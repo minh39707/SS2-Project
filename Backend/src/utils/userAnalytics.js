@@ -17,6 +17,9 @@ const {
 } = require("./habitStatus");
 
 const DEFAULT_ANALYTICS_PERIOD = "week";
+const DEFAULT_ANALYTICS_DAYS = 7;
+const MIN_ANALYTICS_DAYS = 1;
+const MAX_ANALYTICS_DAYS = 90;
 const DAY_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
   weekday: "short",
 });
@@ -42,12 +45,15 @@ const CATEGORY_COLORS = [
   "#3B82F6",
   "#EC4899",
 ];
-const HEATMAP_WEEKS = 26;
 const ANALYTICS_PERIODS = new Set(["day", "week", "month", "year"]);
 
 function parseDateKey(dateKey) {
   const [year, month, day] = String(dateKey).split("-").map(Number);
   return new Date(year, month - 1, day);
+}
+
+function getCurrentYear(todayDateKey = toDateKey()) {
+  return parseDateKey(todayDateKey).getFullYear();
 }
 
 function getWeekdayKey(dateKey) {
@@ -73,21 +79,30 @@ function normalizeAnalyticsPeriod(periodValue, daysValue = null) {
     }
   }
 
-  const parsedDays = Number.parseInt(daysValue, 10);
+  const normalizedDays = normalizeAnalyticsDays(daysValue);
 
-  if (parsedDays === 1) {
+  if (normalizedDays === 1) {
     return "day";
   }
 
-  if (parsedDays >= 365) {
-    return "year";
-  }
-
-  if (parsedDays >= 28) {
+  if (normalizedDays >= 28) {
     return "month";
   }
 
   return DEFAULT_ANALYTICS_PERIOD;
+}
+
+function normalizeAnalyticsDays(daysValue) {
+  const parsedDays = Number.parseInt(daysValue, 10);
+
+  if (!Number.isFinite(parsedDays)) {
+    return DEFAULT_ANALYTICS_DAYS;
+  }
+
+  return Math.min(
+    MAX_ANALYTICS_DAYS,
+    Math.max(MIN_ANALYTICS_DAYS, parsedDays),
+  );
 }
 
 function getPeriodStartDateKey(period, todayDateKey = toDateKey()) {
@@ -111,9 +126,50 @@ function getPeriodStartDateKey(period, todayDateKey = toDateKey()) {
   return toDateKey(new Date(date.getFullYear(), 0, 1));
 }
 
-function buildDateRange(period, todayDateKey = toDateKey()) {
-  const normalizedPeriod = normalizeAnalyticsPeriod(period);
-  const startDateKey = getPeriodStartDateKey(normalizedPeriod, todayDateKey);
+function normalizeAnalyticsYear(yearValue, todayDateKey = toDateKey()) {
+  const fallbackYear = getCurrentYear(todayDateKey);
+  const parsedYear = Number.parseInt(yearValue, 10);
+
+  if (!Number.isFinite(parsedYear) || parsedYear < 1970 || parsedYear > 9999) {
+    return fallbackYear;
+  }
+
+  return parsedYear;
+}
+
+function buildYearDateRange(selectedYear, todayDateKey = toDateKey()) {
+  const currentYear = getCurrentYear(todayDateKey);
+  const normalizedYear = normalizeAnalyticsYear(selectedYear, todayDateKey);
+  const endDate =
+    normalizedYear >= currentYear
+      ? todayDateKey
+      : toDateKey(new Date(normalizedYear, 11, 31));
+  const startDate = toDateKey(new Date(normalizedYear, 0, 1));
+  const dateKeys = [];
+  let cursor = startDate;
+
+  while (cursor <= endDate) {
+    dateKeys.push(cursor);
+    cursor = addDays(cursor, 1);
+  }
+
+  return {
+    year: normalizedYear,
+    startDate,
+    endDate,
+    days: dateKeys.length,
+    dateKeys,
+  };
+}
+
+function buildDateRange(periodValue, daysValue = null, todayDateKey = toDateKey()) {
+  const normalizedPeriod = normalizeAnalyticsPeriod(periodValue, daysValue);
+  const hasExplicitPeriod =
+    typeof periodValue === "string" &&
+    ANALYTICS_PERIODS.has(periodValue.trim().toLowerCase());
+  const startDateKey = hasExplicitPeriod
+    ? getPeriodStartDateKey(normalizedPeriod, todayDateKey)
+    : addDays(todayDateKey, -(normalizeAnalyticsDays(daysValue) - 1));
   const dateKeys = [];
   let cursor = startDateKey;
 
@@ -596,31 +652,57 @@ function buildStreakHabits(habits, successfulDateKeysByHabit, categoryLabels, to
   );
 }
 
-function buildHeatmap(recentDays = [], todayDateKey = toDateKey()) {
-  const currentWeekStart = getCurrentWeekStart(todayDateKey);
-  const firstWeekStart = addDays(currentWeekStart, -(HEATMAP_WEEKS - 1) * 7);
+function buildHeatmap(logs = [], selectedYear = null, todayDateKey = toDateKey()) {
+  const yearRange = buildYearDateRange(selectedYear, todayDateKey);
+  const firstWeekStart = getCurrentWeekStart(yearRange.startDate);
+  const lastWeekStart = getCurrentWeekStart(yearRange.endDate);
+  const totalWeeks =
+    Math.floor(
+      (parseDateKey(lastWeekStart).getTime() - parseDateKey(firstWeekStart).getTime()) /
+        (7 * 24 * 60 * 60 * 1000),
+    ) + 1;
   const successCountMap = new Map();
+  const successYears = new Set();
 
-  for (const day of recentDays) {
-    successCountMap.set(day.date, day.successCount);
+  for (const log of logs) {
+    if (!log?.log_date || !isSuccessStatus(log?.status)) {
+      continue;
+    }
+
+    const dateKey = toDateKey(log.log_date);
+    successYears.add(parseDateKey(dateKey).getFullYear());
+
+    if (dateKey < yearRange.startDate || dateKey > yearRange.endDate) {
+      continue;
+    }
+
+    successCountMap.set(
+      dateKey,
+      (successCountMap.get(dateKey) ?? 0) + 1,
+    );
   }
 
   let maxSuccessCount = 0;
   const weeks = [];
 
-  for (let weekIndex = 0; weekIndex < HEATMAP_WEEKS; weekIndex += 1) {
+  for (let weekIndex = 0; weekIndex < totalWeeks; weekIndex += 1) {
     const weekStart = addDays(firstWeekStart, weekIndex * 7);
     const days = [];
 
     for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
       const dateKey = addDays(weekStart, dayIndex);
+      const isInRange =
+        dateKey >= yearRange.startDate && dateKey <= yearRange.endDate;
       const successCount = successCountMap.get(dateKey) ?? 0;
-      maxSuccessCount = Math.max(maxSuccessCount, successCount);
+      if (isInRange) {
+        maxSuccessCount = Math.max(maxSuccessCount, successCount);
+      }
       days.push({
         date: dateKey,
-        completedCount: successCount,
-        successCount,
+        completedCount: isInRange ? successCount : 0,
+        successCount: isInRange ? successCount : 0,
         isToday: dateKey === todayDateKey,
+        isInRange,
       });
     }
 
@@ -638,11 +720,16 @@ function buildHeatmap(recentDays = [], todayDateKey = toDateKey()) {
       days: week.days.map((day) => ({
         ...day,
         intensity:
-          day.successCount === 0
+          !day.isInRange || day.successCount === 0
             ? 0
             : Math.max(1, Math.ceil((day.successCount / intensityDivisor) * 4)),
       })),
     })),
+    selectedYear: yearRange.year,
+    availableYears: [...new Set([yearRange.year, ...successYears])]
+      .sort((leftYear, rightYear) => rightYear - leftYear),
+    startDate: yearRange.startDate,
+    endDate: yearRange.endDate,
     legend: [
       { level: 0, label: "Less" },
       { level: 1, label: "" },
@@ -757,10 +844,15 @@ function buildUserAnalyticsPayload({
   categoryLabels = {},
   days = null,
   period = DEFAULT_ANALYTICS_PERIOD,
+  year = null,
   todayDateKey = toDateKey(),
 }) {
   const normalizedPeriod = normalizeAnalyticsPeriod(period, days);
-  const dateRange = buildDateRange(normalizedPeriod, todayDateKey);
+  const selectedYear = normalizeAnalyticsYear(year, todayDateKey);
+  const dateRange =
+    normalizedPeriod === "year"
+      ? buildYearDateRange(selectedYear, todayDateKey)
+      : buildDateRange(period, days, todayDateKey);
   const progressMap = buildHabitProgressMap(habits, logs, todayDateKey);
   const logsByDate = groupLogsByDate(logs);
   const logsByHabit = groupLogsByHabit(logs);
@@ -795,7 +887,7 @@ function buildUserAnalyticsPayload({
     topHabits,
     activeGlobalStreak,
   );
-  const activityHeatmap = buildHeatmap(recentDays, todayDateKey);
+  const activityHeatmap = buildHeatmap(logs, selectedYear, todayDateKey);
   const weekdayBreakdown = buildWeekdayBreakdown(recentDays);
   const categoryBreakdown = buildCategoryBreakdown(
     habits,
@@ -816,6 +908,7 @@ function buildUserAnalyticsPayload({
       days: dateRange.days,
       startDate: dateRange.startDate,
       endDate: dateRange.endDate,
+      ...(normalizedPeriod === "year" ? { year: dateRange.year } : {}),
     },
     summary,
     player: buildPlayerSummary(character, activeGlobalStreak),
