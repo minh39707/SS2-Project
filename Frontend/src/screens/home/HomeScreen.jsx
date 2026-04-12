@@ -93,6 +93,100 @@ function getDashboardFrequencyLabel(frequency, specificDays) {
   return null;
 }
 
+function sortDashboardHabits(habits = []) {
+  return [...habits].sort((leftHabit, rightHabit) => {
+    const leftRank =
+      (leftHabit.isScheduledToday ? 0 : 2) + (leftHabit.completedToday ? 1 : 0);
+    const rightRank =
+      (rightHabit.isScheduledToday ? 0 : 2) + (rightHabit.completedToday ? 1 : 0);
+
+    return leftRank - rightRank;
+  });
+}
+
+function mergeDashboardHabit(existingHabit, updatedHabit) {
+  if (!existingHabit || existingHabit.id !== updatedHabit.id) {
+    return existingHabit;
+  }
+
+  return {
+    ...existingHabit,
+    title: updatedHabit.title ?? existingHabit.title,
+    habitType: updatedHabit.habitType ?? existingHabit.habitType,
+    targetValue: updatedHabit.targetValue ?? existingHabit.targetValue,
+    targetUnit: updatedHabit.targetUnit ?? existingHabit.targetUnit,
+    frequencyType: updatedHabit.frequencyType ?? existingHabit.frequencyType,
+    frequencyDays: updatedHabit.frequencyDays ?? existingHabit.frequencyDays,
+    completedToday: updatedHabit.completedToday ?? existingHabit.completedToday,
+    loggedToday: updatedHabit.loggedToday ?? existingHabit.loggedToday,
+    todayStatus: updatedHabit.todayStatus ?? existingHabit.todayStatus,
+    currentStreak: updatedHabit.currentStreak ?? existingHabit.currentStreak,
+    bestStreak: updatedHabit.bestStreak ?? existingHabit.bestStreak,
+    isScheduledToday: updatedHabit.isScheduledToday ?? existingHabit.isScheduledToday,
+    expReward: updatedHabit.expReward ?? existingHabit.expReward,
+    streakBonusExp: updatedHabit.streakBonusExp ?? existingHabit.streakBonusExp,
+  };
+}
+
+function updateTodayCalendarDay(calendarDays = [], hasCompletedPositiveHabitToday) {
+  const todayIndex = (new Date().getDay() + 6) % 7;
+
+  return calendarDays.map((day, index) => {
+    if (index !== todayIndex) {
+      return day;
+    }
+
+    return {
+      ...day,
+      status: hasCompletedPositiveHabitToday ? "done" : "warning",
+      streak: hasCompletedPositiveHabitToday,
+    };
+  });
+}
+
+function applyHabitUpdateToDashboard(dashboard, updatedHabit) {
+  if (!dashboard || !updatedHabit?.id) {
+    return dashboard;
+  }
+
+  const quickActions = sortDashboardHabits(
+    (dashboard.quickActions ?? []).map((habit) =>
+      mergeDashboardHabit(habit, updatedHabit),
+    ),
+  );
+  const goodHabits = (dashboard.goodHabits ?? []).map((habit) =>
+    mergeDashboardHabit(habit, updatedHabit),
+  );
+  const badHabits = (dashboard.badHabits ?? []).map((habit) =>
+    mergeDashboardHabit(habit, updatedHabit),
+  );
+  const positiveHabits =
+    goodHabits.length > 0
+      ? goodHabits
+      : quickActions.filter((habit) => !isNegativeHabit(habit));
+  const totalCount = positiveHabits.filter((habit) => habit.isScheduledToday).length;
+  const completedCount = positiveHabits.filter(
+    (habit) => habit.isScheduledToday && habit.completedToday,
+  ).length;
+
+  return {
+    ...dashboard,
+    quickActions,
+    goodHabits,
+    badHabits,
+    todayProgress: totalCount > 0 ? completedCount / totalCount : 0,
+    dailySummary: {
+      ...(dashboard.dailySummary ?? {}),
+      completedCount,
+      totalCount,
+    },
+    calendarDays: updateTodayCalendarDay(
+      dashboard.calendarDays ?? [],
+      completedCount > 0,
+    ),
+  };
+}
+
 function getTodayKey() {
   const day = new Date().getDay();
   return orderedDays[(day + 6) % 7];
@@ -396,6 +490,26 @@ export default function HomeScreen() {
     return refreshedDashboard;
   };
 
+  const syncDashboardInBackground = () => {
+    void refreshDashboard().catch((error) => {
+      console.warn("Failed to sync dashboard after updating a habit.", error);
+    });
+  };
+
+  const applyHabitResponseToDashboard = (updatedHabit) => {
+    if (!updatedHabit) {
+      return null;
+    }
+
+    const nextDashboard = applyHabitUpdateToDashboard(dashboardData, updatedHabit);
+
+    if (nextDashboard) {
+      setDashboardData(nextDashboard);
+    }
+
+    return nextDashboard;
+  };
+
   const showAllHabitsPraiseIfReady = (refreshedDashboard) => {
     const totalCount = Number(refreshedDashboard?.dailySummary?.totalCount ?? 0);
     const completedCount = Number(
@@ -417,17 +531,19 @@ export default function HomeScreen() {
 
     try {
       const currentStatus = getHabitTodayStatus(habit);
+      let response = null;
 
       if (currentStatus === status) {
-        await clearHabitStatus(habit.id, userProfile);
+        response = await clearHabitStatus(habit.id, userProfile);
       } else {
-        await setHabitStatus(habit.id, status, userProfile);
+        response = await setHabitStatus(habit.id, status, userProfile);
       }
 
-      const refreshedDashboard = await refreshDashboard();
+      const nextDashboard = applyHabitResponseToDashboard(response?.habit ?? null);
       if (currentStatus !== status && status === "avoided") {
-        showAllHabitsPraiseIfReady(refreshedDashboard);
+        showAllHabitsPraiseIfReady(nextDashboard);
       }
+      syncDashboardInBackground();
       setLoadError(null);
     } catch (error) {
       setMissionError(
@@ -473,16 +589,19 @@ export default function HomeScreen() {
     setMissionError(null);
 
     try {
+      let response = null;
+
       if (primaryMission.completedToday) {
-        await uncompleteHabit(primaryMission.id, userProfile);
+        response = await uncompleteHabit(primaryMission.id, userProfile);
       } else {
-        await completeHabit(primaryMission.id, userProfile);
+        response = await completeHabit(primaryMission.id, userProfile);
       }
 
-      const refreshedDashboard = await refreshDashboard();
+      const nextDashboard = applyHabitResponseToDashboard(response?.habit ?? null);
       if (!primaryMission.completedToday) {
-        showAllHabitsPraiseIfReady(refreshedDashboard);
+        showAllHabitsPraiseIfReady(nextDashboard);
       }
+      syncDashboardInBackground();
       setLoadError(null);
     } catch (error) {
       setMissionError(
@@ -519,16 +638,19 @@ export default function HomeScreen() {
     setMissionError(null);
 
     try {
+      let response = null;
+
       if (mission.completedToday) {
-        await uncompleteHabit(mission.id, userProfile);
+        response = await uncompleteHabit(mission.id, userProfile);
       } else {
-        await completeHabit(mission.id, userProfile);
+        response = await completeHabit(mission.id, userProfile);
       }
 
-      const refreshedDashboard = await refreshDashboard();
+      const nextDashboard = applyHabitResponseToDashboard(response?.habit ?? null);
       if (!mission.completedToday) {
-        showAllHabitsPraiseIfReady(refreshedDashboard);
+        showAllHabitsPraiseIfReady(nextDashboard);
       }
+      syncDashboardInBackground();
       setLoadError(null);
     } catch (error) {
       setMissionError(
@@ -804,10 +926,10 @@ export default function HomeScreen() {
                 <Ionicons color={colors.success} name="checkmark-circle" size={56} />
               </View>
               <Text style={styles.allDoneTitle} variant="title">
-                You're all set!
+                You&apos;re all set!
               </Text>
               <Text color="muted" style={styles.allDoneText} variant="body">
-                You've completed all your scheduled routines for today. Great job!
+                You&apos;ve completed all your scheduled routines for today. Great job!
               </Text>
             </View>
           ) : (

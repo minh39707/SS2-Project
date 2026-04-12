@@ -5,10 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  TextInput,
   View,
 } from "react-native";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
@@ -80,17 +82,110 @@ function getReminderLabel(habit) {
     : "No reminder";
 }
 
+const typeFilterOptions = [
+  { key: "all", label: "All" },
+  { key: "positive", label: "Good" },
+  { key: "negative", label: "Bad" },
+];
+
+const statusFilterOptions = [
+  { key: "all", label: "Any status" },
+  { key: "scheduled", label: "Due today" },
+  { key: "open", label: "Needs action" },
+  { key: "done", label: "Done today" },
+  { key: "not_due", label: "Not due" },
+];
+
+function normalizeSearchValue(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function matchesSearch(habit, query) {
+  if (!query) {
+    return true;
+  }
+
+  const searchFields = [
+    habit.title,
+    habit.categoryLabel,
+    habit.preferredTime,
+    habit.targetUnit,
+    getFrequencyLabel(habit),
+    getReminderLabel(habit),
+  ];
+
+  return searchFields.some((field) =>
+    normalizeSearchValue(field).includes(query),
+  );
+}
+
+function matchesTypeFilter(habit, filter) {
+  if (filter === "positive") {
+    return !isNegativeHabit(habit);
+  }
+
+  if (filter === "negative") {
+    return isNegativeHabit(habit);
+  }
+
+  return true;
+}
+
+function matchesStatusFilter(habit, filter) {
+  const todayStatus = getHabitTodayStatus(habit);
+
+  if (filter === "scheduled") {
+    return habit.isScheduledToday;
+  }
+
+  if (filter === "open") {
+    return habit.isScheduledToday && !habit.loggedToday;
+  }
+
+  if (filter === "done") {
+    return habit.completedToday;
+  }
+
+  if (filter === "not_due") {
+    return !habit.isScheduledToday;
+  }
+
+  if (filter === "all") {
+    return true;
+  }
+
+  return Boolean(todayStatus);
+}
+
 export default function ManageHabitsScreen() {
   const router = useRouter();
   const isFocused = useIsFocused();
   const { completed, userProfile } = useOnboarding();
   const [habits, setHabits] = useState([]);
+  const [searchInputValue, setSearchInputValue] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
+  const [draftTypeFilter, setDraftTypeFilter] = useState("all");
+  const [draftStatusFilter, setDraftStatusFilter] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
   const hasLoadedHabitsRef = useRef(false);
+  const normalizedSearchQuery = normalizeSearchValue(searchQuery);
+  const filteredHabits = habits.filter(
+    (habit) =>
+      matchesSearch(habit, normalizedSearchQuery) &&
+      matchesTypeFilter(habit, typeFilter) &&
+      matchesStatusFilter(habit, statusFilter),
+  );
+  const hasActiveFilters =
+    normalizedSearchQuery.length > 0 ||
+    typeFilter !== "all" ||
+    statusFilter !== "all";
 
   useEffect(() => {
     if (!completed || !userProfile?.id || !isFocused) {
@@ -281,6 +376,38 @@ export default function ManageHabitsScreen() {
     );
   };
 
+  const resetFilters = () => {
+    setSearchInputValue("");
+    setSearchQuery("");
+    setTypeFilter("all");
+    setStatusFilter("all");
+  };
+
+  const applySearch = () => {
+    setSearchQuery(searchInputValue);
+  };
+
+  const openFilterModal = () => {
+    setDraftTypeFilter(typeFilter);
+    setDraftStatusFilter(statusFilter);
+    setIsFilterModalVisible(true);
+  };
+
+  const closeFilterModal = () => {
+    setIsFilterModalVisible(false);
+  };
+
+  const applyFilterSelections = () => {
+    setTypeFilter(draftTypeFilter);
+    setStatusFilter(draftStatusFilter);
+    setIsFilterModalVisible(false);
+  };
+
+  const resetDraftFilters = () => {
+    setDraftTypeFilter("all");
+    setDraftStatusFilter("all");
+  };
+
   if (!completed || !userProfile?.id) {
     return (
       <ScreenContainer contentContainerStyle={styles.emptyWrap}>
@@ -320,16 +447,175 @@ export default function ManageHabitsScreen() {
 
         <View style={styles.headerCopy}>
           <Text variant="title">Manage Habits</Text>
-          <Text color="muted" variant="body">
-            Review, edit, or delete the habits you&apos;ve created.
-          </Text>
         </View>
       </View>
 
-      <PrimaryButton
-        label="Create New Habit"
-        onPress={() => router.push("/habit-create")}
-      />
+      <View style={styles.topControls}>
+        <View style={styles.toolbarCard}>
+          <View style={styles.toolbarRow}>
+            <View style={styles.searchWrap}>
+              <Ionicons color="#64748B" name="search-outline" size={17} />
+              <TextInput
+                onChangeText={setSearchInputValue}
+                onSubmitEditing={applySearch}
+                placeholder="Search habits"
+                placeholderTextColor="#94A3B8"
+                returnKeyType="search"
+                style={styles.searchInput}
+                value={searchInputValue}
+              />
+              {searchInputValue ? (
+                <Pressable
+                  accessibilityLabel="Clear search"
+                  onPress={() => {
+                    setSearchInputValue("");
+                    setSearchQuery("");
+                  }}
+                  style={({ pressed }) => [
+                    styles.searchClearButton,
+                    pressed && styles.controlButtonPressed,
+                  ]}
+                >
+                  <Ionicons color="#64748B" name="close-circle" size={17} />
+                </Pressable>
+              ) : null}
+            </View>
+
+            <Pressable
+              accessibilityLabel="Search habits"
+              onPress={applySearch}
+              style={({ pressed }) => [
+                styles.iconActionButton,
+                pressed && styles.controlButtonPressed,
+              ]}
+            >
+              <Ionicons color={colors.primary} name="search" size={17} />
+            </Pressable>
+
+            <Pressable
+              accessibilityLabel="Open filters"
+              onPress={openFilterModal}
+              style={({ pressed }) => [
+                styles.iconActionButton,
+                hasActiveFilters && styles.iconActionButtonActive,
+                pressed && styles.controlButtonPressed,
+              ]}
+            >
+              <Ionicons
+                color={hasActiveFilters ? colors.surface : colors.primary}
+                name="options-outline"
+                size={17}
+              />
+            </Pressable>
+          </View>
+        </View>
+
+        <PrimaryButton
+          icon={<Ionicons color={colors.surface} name="add" size={16} />}
+          label="Create Habit"
+          onPress={() => router.push("/habit-create")}
+          style={styles.compactCreateButton}
+        />
+      </View>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={closeFilterModal}
+        transparent
+        visible={isFilterModalVisible}
+      >
+        <Pressable onPress={closeFilterModal} style={styles.modalOverlay} />
+        <View style={styles.modalWrap}>
+          <View style={styles.filterModalCard}>
+            <View style={styles.filterModalHeader}>
+              <View style={styles.filterModalCopy}>
+                <Text variant="subtitle">Filter habits</Text>
+                <Text color="muted" variant="body">
+                  Narrow the list to the habits you want to work with.
+                </Text>
+              </View>
+              <Pressable
+                accessibilityLabel="Close filters"
+                onPress={closeFilterModal}
+                style={({ pressed }) => [
+                  styles.modalCloseButton,
+                  pressed && styles.controlButtonPressed,
+                ]}
+              >
+                <Ionicons color="#64748B" name="close" size={18} />
+              </Pressable>
+            </View>
+
+            <View style={styles.filterSection}>
+              <Text color="muted" variant="caption">
+                Habit type
+              </Text>
+              <View style={styles.filterRow}>
+                {typeFilterOptions.map((option) => {
+                  const isActive = draftTypeFilter === option.key;
+
+                  return (
+                    <Pressable
+                      key={option.key}
+                      onPress={() => setDraftTypeFilter(option.key)}
+                      style={({ pressed }) => [
+                        styles.filterChip,
+                        isActive && styles.filterChipActive,
+                        pressed && styles.controlButtonPressed,
+                      ]}
+                    >
+                      <Text
+                        color={isActive ? "white" : "muted"}
+                        style={isActive && styles.filterChipTextActive}
+                        variant="caption"
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.filterSection}>
+              <Text color="muted" variant="caption">
+                Status
+              </Text>
+              <View style={styles.filterRow}>
+                {statusFilterOptions.map((option) => {
+                  const isActive = draftStatusFilter === option.key;
+
+                  return (
+                    <Pressable
+                      key={option.key}
+                      onPress={() => setDraftStatusFilter(option.key)}
+                      style={({ pressed }) => [
+                        styles.filterChip,
+                        isActive && styles.filterChipActive,
+                        pressed && styles.controlButtonPressed,
+                      ]}
+                    >
+                      <Text
+                        color={isActive ? "white" : "muted"}
+                        style={isActive && styles.filterChipTextActive}
+                        variant="caption"
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.modalActions}>
+              <PrimaryButton label="Apply filters" onPress={applyFilterSelections} />
+              <SecondaryButton label="Reset filters" onPress={resetDraftFilters} />
+              <SecondaryButton label="Cancel" onPress={closeFilterModal} />
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {error ? (
         <Text style={styles.errorText} variant="caption">
@@ -346,6 +632,15 @@ export default function ManageHabitsScreen() {
             title="No habits yet"
           />
         </View>
+      ) : !filteredHabits.length ? (
+        <View style={styles.emptyListWrap}>
+          <EmptyStateCard
+            actionLabel="Clear filters"
+            description="Try a different keyword or reset the current filters to see more habits."
+            onAction={resetFilters}
+            title="No matching habits"
+          />
+        </View>
       ) : (
         <ScrollView
           contentContainerStyle={styles.list}
@@ -358,7 +653,7 @@ export default function ManageHabitsScreen() {
           }
           showsVerticalScrollIndicator={false}
         >
-          {habits.map((habit) => {
+          {filteredHabits.map((habit) => {
             const todayStatus = getHabitTodayStatus(habit);
             const isBadHabit = isNegativeHabit(habit);
             const isAvoided = todayStatus === "avoided";
@@ -644,7 +939,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   staticContent: {
-    gap: spacing.lg,
+    gap: spacing.md,
     paddingBottom: spacing.xxl,
   },
   header: {
@@ -668,6 +963,128 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: colors.danger,
+  },
+  topControls: {
+    gap: spacing.sm,
+  },
+  toolbarCard: {
+    padding: 0,
+  },
+  toolbarRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  searchWrap: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 38,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#D8E3F0",
+    backgroundColor: "#F8FBFF",
+    paddingHorizontal: spacing.sm,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.text,
+    paddingVertical: 0,
+    fontSize: 14,
+  },
+  searchClearButton: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconActionButton: {
+    width: 38,
+    height: 38,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#D8E3F0",
+    backgroundColor: "#F8FBFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconActionButtonActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  compactCreateButton: {
+    alignSelf: "flex-end",
+    minHeight: 40,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
+  },
+  filterSection: {
+    gap: spacing.xs,
+  },
+  filterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  filterChip: {
+    minHeight: 32,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#D8E3F0",
+    backgroundColor: "#F8FBFF",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+  },
+  filterChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  controlButtonPressed: {
+    opacity: 0.8,
+  },
+  filterChipTextActive: {
+    fontWeight: "700",
+  },
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.35)",
+  },
+  modalWrap: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  filterModalCard: {
+    gap: spacing.lg,
+    borderRadius: radii.xxl,
+    backgroundColor: colors.surface,
+    padding: spacing.lg,
+    ...shadows.card,
+  },
+  filterModalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: spacing.md,
+  },
+  filterModalCopy: {
+    flex: 1,
+    gap: spacing.xs,
+  },
+  modalCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F1F5F9",
+  },
+  modalActions: {
+    gap: spacing.sm,
   },
   emptyListWrap: {
     flex: 1,

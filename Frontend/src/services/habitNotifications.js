@@ -86,10 +86,10 @@ function getReminderBody(habit, reminderTime) {
   const reminderLabel = formatTimeLabel(reminderTime);
 
   if (habit.habitType === "negative") {
-    return `Den ${reminderLabel} roi, hom nay ban da tranh duoc "${habit.title}" chua?`;
+    return `Đến ${reminderLabel} Rồi, Hôm nay bạn có tránh được "${habit.title}" chưa?`;
   }
 
-  return `Den gio ${reminderLabel} roi, nho hoan thanh "${habit.title}" nhe.`;
+  return `Đến giờ ${reminderLabel} rồi, nhớ hoàn thành "${habit.title}" nhé.`;
 }
 
 function buildNotificationContent(habit, reminderTime) {
@@ -101,7 +101,7 @@ function buildNotificationContent(habit, reminderTime) {
     body: getReminderBody(habit, reminderTime),
     sound: false,
     data: {
-      url: "/(tabs)",
+      url: "/habit-manage",
       habitId: habit.id,
       habitType: habit.habitType,
       reminderTime,
