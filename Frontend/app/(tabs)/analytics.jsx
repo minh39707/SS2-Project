@@ -20,7 +20,7 @@ import Card from "@/src/components/ui/Card";
 import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, spacing } from "@/src/constants/theme";
-import { getUserAnalytics } from "@/src/services/user.service";
+import { getUserAnalytics, getUserAnalyticsBundle } from "@/src/services/user.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
 
 const RANGE_OPTIONS = [
@@ -148,6 +148,16 @@ function buildFallbackAnalyticsMap() {
   return Object.fromEntries(
     RANGE_OPTIONS.map((option) => [option.value, buildFallbackAnalytics(option.value)]),
   );
+}
+
+function getRequiredAnalyticsPeriods(selectedRanges) {
+  return [...new Set([
+    selectedRanges.overview,
+    selectedRanges.weekday,
+    selectedRanges.category,
+    selectedRanges.completions,
+    "year",
+  ])];
 }
 
 function getHeatmapCellStyle(day) {
@@ -430,25 +440,89 @@ export default function AnalyticsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isHeatmapYearLoading, setIsHeatmapYearLoading] = useState(false);
+  const [loadingPeriods, setLoadingPeriods] = useState({});
+  const [loadedPeriods, setLoadedPeriods] = useState({});
   const [loadError, setLoadError] = useState(null);
   const [isCompletionsExpanded, setIsCompletionsExpanded] = useState(false);
   const [isStreaksExpanded, setIsStreaksExpanded] = useState(false);
   const hasLoadedScreenRef = useRef(false);
   const isCompactLayout = width < 430;
 
-  const loadAnalyticsBundle = useCallback(async (options = {}) => {
-    const results = await Promise.all(
-      RANGE_OPTIONS.map(async (option) => [
-        option.value,
-        await getUserAnalytics({
-          period: option.value,
-          forceRefresh: options.forceRefresh ?? false,
-        }),
-      ]),
-    );
+  const loadAnalyticsBundle = useCallback(
+    async (options = {}) =>
+      getUserAnalyticsBundle({
+        periods: getRequiredAnalyticsPeriods(selectedRanges),
+        year: currentCalendarYear,
+        forceRefresh: options.forceRefresh ?? false,
+      }),
+    [currentCalendarYear, selectedRanges],
+  );
 
-    return Object.fromEntries(results);
+  const mergeAnalyticsResults = useCallback((results) => {
+    const resultEntries = Object.entries(results ?? {});
+
+    if (resultEntries.length === 0) {
+      return;
+    }
+
+    setAnalyticsByPeriod((currentAnalytics) => ({
+      ...currentAnalytics,
+      ...Object.fromEntries(resultEntries),
+    }));
+    setLoadedPeriods((currentLoadedPeriods) => ({
+      ...currentLoadedPeriods,
+      ...Object.fromEntries(resultEntries.map(([period]) => [period, true])),
+    }));
   }, []);
+
+  const ensureAnalyticsPeriodLoaded = useCallback(
+    async (period, options = {}) => {
+      if (!period || (loadedPeriods[period] && !options.forceRefresh)) {
+        return;
+      }
+
+      setLoadingPeriods((currentLoadingPeriods) => {
+        if (currentLoadingPeriods[period]) {
+          return currentLoadingPeriods;
+        }
+
+        return {
+          ...currentLoadingPeriods,
+          [period]: true,
+        };
+      });
+
+      try {
+        const analytics = await getUserAnalytics({
+          period,
+          year: period === "year" ? currentCalendarYear : undefined,
+          forceRefresh: options.forceRefresh ?? false,
+        });
+
+        setAnalyticsByPeriod((currentAnalytics) => ({
+          ...currentAnalytics,
+          [period]: analytics,
+        }));
+        setLoadedPeriods((currentLoadedPeriods) => ({
+          ...currentLoadedPeriods,
+          [period]: true,
+        }));
+        setLoadError(null);
+      } catch (error) {
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load analytics right now.",
+        );
+      } finally {
+        setLoadingPeriods((currentLoadingPeriods) => ({
+          ...currentLoadingPeriods,
+          [period]: false,
+        }));
+      }
+    },
+    [currentCalendarYear, loadedPeriods],
+  );
 
   const setChartRange = (chartKey, period) => {
     setSelectedRanges((currentRanges) => ({
@@ -478,7 +552,7 @@ export default function AnalyticsScreen() {
 
       try {
         const results = await loadAnalyticsBundle();
-        setAnalyticsByPeriod(results);
+        mergeAnalyticsResults(results);
         const resolvedHeatmapYear =
           results?.year?.activityHeatmap?.selectedYear ?? currentCalendarYear;
         setHeatmapAnalyticsByYear((currentCache) => ({
@@ -507,7 +581,41 @@ export default function AnalyticsScreen() {
     };
 
     void loadAnalytics();
-  }, [completed, currentCalendarYear, hydrated, isFocused, loadAnalyticsBundle]);
+  }, [
+    completed,
+    currentCalendarYear,
+    hydrated,
+    isFocused,
+    loadAnalyticsBundle,
+    mergeAnalyticsResults,
+  ]);
+
+  useEffect(() => {
+    if (!hasLoadedScreenRef.current) {
+      return;
+    }
+
+    const selectedPeriods = [
+      selectedRanges.overview,
+      selectedRanges.weekday,
+      selectedRanges.category,
+      selectedRanges.completions,
+    ];
+
+    selectedPeriods.forEach((period) => {
+      if (!loadedPeriods[period] && !loadingPeriods[period]) {
+        void ensureAnalyticsPeriodLoaded(period);
+      }
+    });
+  }, [
+    ensureAnalyticsPeriodLoaded,
+    loadedPeriods,
+    loadingPeriods,
+    selectedRanges.category,
+    selectedRanges.completions,
+    selectedRanges.overview,
+    selectedRanges.weekday,
+  ]);
 
   const currentYearAnalytics = analyticsByPeriod.year ?? buildFallbackAnalytics("year");
   const heatmapAnalytics =
@@ -606,7 +714,7 @@ export default function AnalyticsScreen() {
       const results = await loadAnalyticsBundle({ forceRefresh: true });
       const resolvedHeatmapYear =
         results?.year?.activityHeatmap?.selectedYear ?? currentCalendarYear;
-      setAnalyticsByPeriod(results);
+      mergeAnalyticsResults(results);
       setHeatmapAnalyticsByYear((currentCache) => ({
         ...currentCache,
         [resolvedHeatmapYear]: results.year,
@@ -635,7 +743,7 @@ export default function AnalyticsScreen() {
     } finally {
       setIsRefreshing(false);
     }
-  }, [currentCalendarYear, loadAnalyticsBundle, selectedHeatmapYear]);
+  }, [currentCalendarYear, loadAnalyticsBundle, mergeAnalyticsResults, selectedHeatmapYear]);
 
   useEffect(() => {
     const unsubscribe = navigation.addListener("tabPress", (e) => {
@@ -751,6 +859,13 @@ export default function AnalyticsScreen() {
     </View>
   );
 
+  const renderSectionLoadingBadge = (period) =>
+    loadingPeriods[period] ? (
+      <View style={styles.sectionLoadingBadge}>
+        <ActivityIndicator color={colors.primary} size="small" />
+      </View>
+    ) : null;
+
   const renderHeatmapYearSelector = () => (
     <View style={[styles.yearSelectorRow, isCompactLayout && styles.rangeRowWrap]}>
       {heatmapYears.map((year) => {
@@ -812,6 +927,7 @@ export default function AnalyticsScreen() {
             {renderRangeSelector(selectedRanges.overview, (period) =>
               setChartRange("overview", period),
             )}
+            {renderSectionLoadingBadge(selectedRanges.overview)}
           </View>
 
           <View style={styles.quickStatsRow}>
@@ -988,6 +1104,7 @@ export default function AnalyticsScreen() {
                 Biểu đồ này thống kê tần suất hoàn thành thói quen theo từng ngày trong tuần, giúp bạn nhận biết ngày nào mình hoạt động hiệu quả nhất.
               </Text>
             </View>
+            {renderSectionLoadingBadge(selectedRanges.weekday)}
             {renderRangeSelector(selectedRanges.weekday, (period) =>
               setChartRange("weekday", period),
             )}
@@ -1008,6 +1125,7 @@ export default function AnalyticsScreen() {
                 </Text>
               ) : null}
             </View>
+            {renderSectionLoadingBadge(selectedRanges.category)}
             {renderRangeSelector(selectedRanges.category, (period) =>
               setChartRange("category", period),
             )}
@@ -1069,6 +1187,7 @@ export default function AnalyticsScreen() {
                 Successful check-ins for each habit in the selected period
               </Text>
             </View>
+            {renderSectionLoadingBadge(selectedRanges.completions)}
             {renderRangeSelector(selectedRanges.completions, (period) =>
               setChartRange("completions", period),
             )}
@@ -1255,6 +1374,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     gap: spacing.md,
+  },
+  sectionLoadingBadge: {
+    minWidth: 20,
+    alignItems: "center",
+    justifyContent: "center",
   },
   refreshButton: {
     width: 42,

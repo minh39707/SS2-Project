@@ -9,7 +9,21 @@ const { isSuccessStatus } = require('../utils/habitStatus');
 const router = express.Router();
 const AVATAR_BUCKET = 'avatars';
 const MAX_AVATAR_UPLOAD_BYTES = 3 * 1024 * 1024;
+const VALID_ANALYTICS_PERIODS = new Set(['day', 'week', 'month', 'year']);
 let hasEnsuredAvatarBucket = false;
+
+function parseAnalyticsPeriods(periodsValue) {
+  if (typeof periodsValue !== 'string') {
+    return [];
+  }
+
+  return [...new Set(
+    periodsValue
+      .split(',')
+      .map((period) => period.trim().toLowerCase())
+      .filter((period) => VALID_ANALYTICS_PERIODS.has(period)),
+  )];
+}
 
 function serializeUserProfile(user, character) {
   const level = character?.level ?? 1;
@@ -355,6 +369,32 @@ router.get('/me/analytics', requireUser, async (req, res) => {
 
     if (characterResult.error) {
       throw characterResult.error;
+    }
+
+    const requestedPeriods = parseAnalyticsPeriods(req.query?.periods);
+
+    if (requestedPeriods.length > 0) {
+      const analyticsByPeriod = Object.fromEntries(
+        requestedPeriods.map((period) => [
+          period,
+          buildUserAnalyticsPayload({
+            character: characterResult.data,
+            habits,
+            logs,
+            categoryLabels,
+            period,
+            year: period === 'year' ? req.query?.year : null,
+          }),
+        ]),
+      );
+
+      return res.json({
+        resolvedUserId: req.userId,
+        profile: userResult.data
+          ? serializeUserProfile(userResult.data, characterResult.data)
+          : null,
+        periods: analyticsByPeriod,
+      });
     }
 
     const analytics = buildUserAnalyticsPayload({

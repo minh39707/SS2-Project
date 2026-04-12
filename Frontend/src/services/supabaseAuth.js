@@ -1,5 +1,6 @@
-import * as Linking from "expo-linking";
+import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
+import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { apiRequest } from "@/src/services/api";
 import { supabase } from "@/src/services/supabase";
@@ -28,6 +29,10 @@ function getSearchParams(urlPart = "") {
 
 function buildApiBaseUrlForHost(hostname) {
   return `http://${hostname}:4000/api`;
+}
+
+function isExpoGo() {
+  return Constants.appOwnership === "expo";
 }
 
 function getApiBaseUrlFromRedirect(redirectUrl) {
@@ -178,7 +183,10 @@ async function syncOAuthProfile(provider, apiBaseUrlOverride = null) {
 }
 
 export function getOAuthRedirectUrl() {
-  return Linking.createURL(OAUTH_CALLBACK_PATH);
+  return AuthSession.makeRedirectUri({
+    path: OAUTH_CALLBACK_PATH,
+    scheme: "project",
+  });
 }
 
 export async function signInWithOAuth(provider) {
@@ -196,6 +204,16 @@ export async function signInWithOAuth(provider) {
 
   if (__DEV__) {
     console.log(`[oauth:${provider}] redirectTo`, redirectTo);
+    console.log(
+      `[oauth:${provider}] runtime`,
+      isExpoGo() ? "expo-go" : "native-build",
+    );
+
+    if (isExpoGo()) {
+      console.log(
+        `[oauth:${provider}] Add this exact exp:// URL to Supabase Redirect URLs for Expo Go local auth.`,
+      );
+    }
   }
 
   const { data, error } = await supabase.auth.signInWithOAuth({

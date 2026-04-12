@@ -12,6 +12,7 @@ import {
 const USER_PROFILE_CACHE_TTL_MS = 60_000;
 const USER_STATS_CACHE_TTL_MS = 45_000;
 const USER_ANALYTICS_CACHE_TTL_MS = 45_000;
+const VALID_ANALYTICS_PERIODS = new Set(["day", "week", "month", "year"]);
 
 function getCurrentCalendarYear() {
   return new Date().getFullYear();
@@ -31,6 +32,49 @@ function getUserAnalyticsCacheKey(userId, period = "week", year = null) {
   }
 
   return `user-analytics:${userId ?? "guest"}:${period}`;
+}
+
+function getUserAnalyticsBundleCacheKey(userId, periods = [], year = null) {
+  const normalizedPeriods = [...new Set(periods)]
+    .filter((period) => VALID_ANALYTICS_PERIODS.has(period))
+    .sort()
+    .join(",");
+
+  return `user-analytics-bundle:${userId ?? "guest"}:${normalizedPeriods}:${year ?? "current"}`;
+}
+
+function normalizeAnalyticsPeriodOption(period, days) {
+  const normalizedPeriod =
+    typeof period === "string" ? period.toLowerCase() : null;
+
+  if (VALID_ANALYTICS_PERIODS.has(normalizedPeriod)) {
+    return normalizedPeriod;
+  }
+
+  if (Number.isFinite(days) && Number(days) >= 365) {
+    return "year";
+  }
+
+  if (Number.isFinite(days) && Number(days) >= 28) {
+    return "month";
+  }
+
+  if (Number.isFinite(days) && Number(days) === 1) {
+    return "day";
+  }
+
+  return "week";
+}
+
+function setUserAnalyticsCache(userId, period, analytics, year = null) {
+  const cacheKey = getUserAnalyticsCacheKey(
+    userId,
+    period,
+    period === "year" ? year : null,
+  );
+
+  setCachedResource(cacheKey, analytics, USER_ANALYTICS_CACHE_TTL_MS);
+  return analytics;
 }
 
 async function loadUserServiceContext() {
@@ -312,18 +356,10 @@ export async function getUserStats(options = {}) {
 
 export async function getUserAnalytics(options = {}) {
   const { persistedState, userProfile } = await loadUserServiceContext();
-  const period =
-    typeof options.period === "string" ? options.period.toLowerCase() : null;
-  const normalizedPeriod =
-    period === "day" || period === "week" || period === "month" || period === "year"
-      ? period
-      : Number.isFinite(options.days) && Number(options.days) >= 365
-        ? "year"
-        : Number.isFinite(options.days) && Number(options.days) >= 28
-          ? "month"
-          : Number.isFinite(options.days) && Number(options.days) === 1
-            ? "day"
-            : "week";
+  const normalizedPeriod = normalizeAnalyticsPeriodOption(
+    options.period,
+    options.days,
+  );
   const selectedYear =
     normalizedPeriod === "year"
       ? Number.parseInt(options.year, 10) || getCurrentCalendarYear()
@@ -361,7 +397,88 @@ export async function getUserAnalytics(options = {}) {
         userProfile.id,
       );
 
-      return response;
+      return setUserAnalyticsCache(
+        userProfile.id,
+        normalizedPeriod,
+        response,
+        selectedYear,
+      );
+    },
+    {
+      ttlMs: USER_ANALYTICS_CACHE_TTL_MS,
+      forceRefresh: options.forceRefresh ?? false,
+    },
+  );
+}
+
+export async function getUserAnalyticsBundle(options = {}) {
+  const { persistedState, userProfile } = await loadUserServiceContext();
+  const requestedPeriods = [...new Set(
+    (Array.isArray(options.periods) ? options.periods : [])
+      .map((period) => normalizeAnalyticsPeriodOption(period, null))
+      .filter((period) => VALID_ANALYTICS_PERIODS.has(period)),
+  )];
+  const normalizedPeriods =
+    requestedPeriods.length > 0 ? requestedPeriods : ["week"];
+  const selectedYear = normalizedPeriods.includes("year")
+    ? Number.parseInt(options.year, 10) || getCurrentCalendarYear()
+    : null;
+  const bundleCacheKey = getUserAnalyticsBundleCacheKey(
+    userProfile?.id,
+    normalizedPeriods,
+    selectedYear,
+  );
+
+  if (!userProfile?.id) {
+    const fallbackBundle = Object.fromEntries(
+      normalizedPeriods.map((period) => [
+        period,
+        buildFallbackAnalytics(persistedState, period),
+      ]),
+    );
+
+    return setCachedResource(
+      bundleCacheKey,
+      fallbackBundle,
+      USER_ANALYTICS_CACHE_TTL_MS,
+    );
+  }
+
+  return loadCachedResource(
+    bundleCacheKey,
+    async () => {
+      const response = await apiRequest(
+        `/users/me/analytics?periods=${normalizedPeriods.join(",")}${selectedYear ? `&year=${selectedYear}` : ""}`,
+        {
+          method: "GET",
+          userId: userProfile.id,
+          authToken: userProfile.accessToken,
+          timeoutMs: 20000,
+        },
+      );
+
+      assertResolvedUserMatches(
+        response?.profile,
+        response?.resolvedUserId,
+        userProfile.id,
+      );
+
+      const periodsPayload =
+        response?.periods && typeof response.periods === "object"
+          ? response.periods
+          : {};
+
+      return Object.fromEntries(
+        normalizedPeriods.map((period) => [
+          period,
+          setUserAnalyticsCache(
+            userProfile.id,
+            period,
+            periodsPayload[period] ?? buildFallbackAnalytics(persistedState, period),
+            selectedYear,
+          ),
+        ]),
+      );
     },
     {
       ttlMs: USER_ANALYTICS_CACHE_TTL_MS,
