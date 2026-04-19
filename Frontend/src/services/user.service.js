@@ -102,6 +102,7 @@ function buildFallbackProfile(name, completed, avatarUrl = null) {
     avatarUrl,
     level: completed ? 1 : 0,
     levelProgress: completed ? 20 : 0,
+    goldCoins: 0,
   };
 }
 

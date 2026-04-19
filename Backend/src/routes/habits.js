@@ -11,6 +11,9 @@ const {
   applyCharacterProgress,
   buildHabitProgressMap,
   calculateHabitStreak,
+  calculateGlobalStreak,
+  getDailyStreakGold,
+  getGoldPerTask,
   getHabitStartDate,
   isHabitScheduledOnDate,
   toDateKey,
@@ -32,7 +35,7 @@ const DEFAULT_REMINDER_BY_TIME = {
   evening: "20:00",
 };
 const HABIT_LOG_SELECT_FIELDS =
-  "log_id, habit_id, log_date, status, hp_change, exp_change, streak_at_log";
+  "log_id, habit_id, log_date, status, hp_change, exp_change, streak_at_log, logged_at";
 const HABIT_NOT_FOUND_MESSAGE = "Habit not found.";
 const CATEGORY_CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedCategoryMap = null;
@@ -353,12 +356,40 @@ async function fetchTodayHabitLog(userId, habitId, dateKey) {
   return data;
 }
 
+async function fetchLogsForDate(userId, dateKey) {
+  const { data, error } = await supabase
+    .from("habit_logs")
+    .select(HABIT_LOG_SELECT_FIELDS)
+    .eq("user_id", userId)
+    .eq("log_date", dateKey)
+    .order("logged_at", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
+}
+
+async function fetchUserHabits(userId) {
+  const { data, error } = await supabase
+    .from("habits")
+    .select("*")
+    .eq("user_id", userId);
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
+}
+
 async function fetchHabitCompletionContext(userId, habitId, dateKey) {
   const [categoryMap, habit, character, existingLogs, todayLog] = await Promise.all([
     loadCategoryMap(),
     fetchHabitById(habitId, userId),
     fetchCharacter(userId),
-    fetchHabitLogs(userId, habitId),
+    fetchHabitLogs(userId),
     fetchTodayHabitLog(userId, habitId, dateKey),
   ]);
 
@@ -425,6 +456,232 @@ function buildHabitLogEffects(habit, status, nextStreak) {
   };
 }
 
+function sumLogReward(logs = [], key) {
+  return logs.reduce((total, log) => total + Number(log?.[key] ?? 0), 0);
+}
+
+function getSuccessfulDateKeysForUser(habitsById, logs = []) {
+  return logs
+    .filter((log) => {
+      const habit = habitsById.get(log?.habit_id);
+      return habit && isSuccessfulLogForHabit(habit, log);
+    })
+    .map((log) => toDateKey(log.log_date));
+}
+
+function getLogsForDate(logs = [], dateKey) {
+  return logs
+    .filter((log) => toDateKey(log.log_date) === dateKey)
+    .sort((leftLog, rightLog) => {
+      const leftTime = Date.parse(leftLog?.logged_at ?? 0);
+      const rightTime = Date.parse(rightLog?.logged_at ?? 0);
+
+      return leftTime - rightTime;
+    });
+}
+
+function computeTodayGoldTotal({
+  character,
+  todayLogs,
+  allLogs,
+  userHabits,
+  dateKey,
+}) {
+  const normalizedTodayLogs = getLogsForDate(todayLogs, dateKey);
+  const habitsById = new Map(userHabits.map((habit) => [habit.habit_id, habit]));
+  const successfulDateKeys = getSuccessfulDateKeysForUser(habitsById, allLogs);
+  const currentGlobalStreak = calculateGlobalStreak(successfulDateKeys, dateKey).streak;
+  const streakDailyGold = getDailyStreakGold(currentGlobalStreak);
+  const scheduledHabitIds = new Set(
+    userHabits
+      .filter((habit) => habit.is_active !== false)
+      .filter((habit) => isHabitScheduledOnDate(habit, dateKey))
+      .map((habit) => habit.habit_id),
+  );
+  const startOfDayCharacter = applyCharacterProgress(
+    character,
+    -sumLogReward(normalizedTodayLogs, "exp_change"),
+    -sumLogReward(normalizedTodayLogs, "hp_change"),
+    0,
+  );
+
+  let nextCharacter = { ...startOfDayCharacter };
+  let didAwardStreakGold = false;
+  let didAwardDailyCompletionGold = false;
+  let totalGold = 0;
+  const successfulTodayHabitIds = new Set();
+
+  for (const log of normalizedTodayLogs) {
+    const habit = habitsById.get(log.habit_id);
+    const logExpChange = Number(log.exp_change ?? 0);
+    const logHpChange = Number(log.hp_change ?? 0);
+
+    if (!habit || !isSuccessfulLogForHabit(habit, log)) {
+      nextCharacter = applyCharacterProgress(
+        nextCharacter,
+        logExpChange,
+        logHpChange,
+        0,
+      );
+      continue;
+    }
+
+    const taskGold = getGoldPerTask(nextCharacter.level);
+    const postExpCharacter = applyCharacterProgress(
+      nextCharacter,
+      logExpChange,
+      logHpChange,
+      0,
+    );
+    const levelUpGold = Math.max(0, postExpCharacter.level - nextCharacter.level) * 10;
+    const streakGold = didAwardStreakGold ? 0 : streakDailyGold;
+
+    successfulTodayHabitIds.add(log.habit_id);
+
+    const completedAllTodayHabits =
+      !didAwardDailyCompletionGold &&
+      scheduledHabitIds.size > 0 &&
+      [...scheduledHabitIds].every((habitId) => successfulTodayHabitIds.has(habitId));
+    const dailyCompletionGold = completedAllTodayHabits ? 10 : 0;
+    const goldChange = taskGold + levelUpGold + streakGold + dailyCompletionGold;
+
+    totalGold += goldChange;
+    nextCharacter = applyCharacterProgress(
+      nextCharacter,
+      logExpChange,
+      logHpChange,
+      goldChange,
+    );
+    didAwardStreakGold = true;
+
+    if (completedAllTodayHabits) {
+      didAwardDailyCompletionGold = true;
+    }
+  }
+
+  return totalGold;
+}
+
+function buildNextLogs(existingLogs = [], previousLog = null, nextLog = null) {
+  const filteredLogs = previousLog?.log_id
+    ? existingLogs.filter((log) => log.log_id !== previousLog.log_id)
+    : [...existingLogs];
+
+  if (!nextLog) {
+    return filteredLogs;
+  }
+
+  return [...filteredLogs, nextLog];
+}
+
+async function rebalanceTodayGoldRewards(userId, dateKey) {
+  const [character, todayLogs, allLogs, userHabits] = await Promise.all([
+    fetchCharacter(userId),
+    fetchLogsForDate(userId, dateKey),
+    fetchHabitLogs(userId),
+    fetchUserHabits(userId),
+  ]);
+
+  const existingTodayGold = sumLogReward(todayLogs, "gold_change");
+  const startOfDayCharacter = applyCharacterProgress(
+    character,
+    -sumLogReward(todayLogs, "exp_change"),
+    -sumLogReward(todayLogs, "hp_change"),
+    -existingTodayGold,
+  );
+  const habitsById = new Map(userHabits.map((habit) => [habit.habit_id, habit]));
+  const successfulDateKeys = getSuccessfulDateKeysForUser(habitsById, allLogs);
+  const currentGlobalStreak = calculateGlobalStreak(successfulDateKeys, dateKey).streak;
+  const streakDailyGold = getDailyStreakGold(currentGlobalStreak);
+  const scheduledHabitIds = new Set(
+    userHabits
+      .filter((habit) => habit.is_active !== false)
+      .filter((habit) => isHabitScheduledOnDate(habit, dateKey))
+      .map((habit) => habit.habit_id),
+  );
+
+  let nextCharacter = { ...startOfDayCharacter };
+  let didAwardStreakGold = false;
+  let didAwardDailyCompletionGold = false;
+  const successfulTodayHabitIds = new Set();
+  const nextGoldByLogId = new Map();
+
+  for (const log of todayLogs) {
+    const habit = habitsById.get(log.habit_id);
+    const logExpChange = Number(log.exp_change ?? 0);
+    const logHpChange = Number(log.hp_change ?? 0);
+
+    if (!habit || !isSuccessfulLogForHabit(habit, log)) {
+      nextGoldByLogId.set(log.log_id, 0);
+      nextCharacter = applyCharacterProgress(
+        nextCharacter,
+        logExpChange,
+        logHpChange,
+        0,
+      );
+      continue;
+    }
+
+    const taskGold = getGoldPerTask(nextCharacter.level);
+    const postExpCharacter = applyCharacterProgress(
+      nextCharacter,
+      logExpChange,
+      logHpChange,
+      0,
+    );
+    const levelUpGold = Math.max(0, postExpCharacter.level - nextCharacter.level) * 10;
+    const streakGold = didAwardStreakGold ? 0 : streakDailyGold;
+
+    successfulTodayHabitIds.add(log.habit_id);
+
+    const completedAllTodayHabits =
+      !didAwardDailyCompletionGold &&
+      scheduledHabitIds.size > 0 &&
+      [...scheduledHabitIds].every((habitId) => successfulTodayHabitIds.has(habitId));
+    const dailyCompletionGold = completedAllTodayHabits ? 10 : 0;
+    const goldChange = taskGold + levelUpGold + streakGold + dailyCompletionGold;
+
+    nextGoldByLogId.set(log.log_id, goldChange);
+    nextCharacter = applyCharacterProgress(
+      nextCharacter,
+      logExpChange,
+      logHpChange,
+      goldChange,
+    );
+    didAwardStreakGold = true;
+
+    if (completedAllTodayHabits) {
+      didAwardDailyCompletionGold = true;
+    }
+  }
+
+  await Promise.all(
+    todayLogs.map((log) => {
+      const nextGold = nextGoldByLogId.get(log.log_id) ?? 0;
+
+      if (Number(log.gold_change ?? 0) === nextGold) {
+        return Promise.resolve();
+      }
+
+      return supabase
+        .from("habit_logs")
+        .update({ gold_change: nextGold })
+        .eq("log_id", log.log_id);
+    }),
+  );
+
+  if ((character.gold_coins ?? 0) !== (nextCharacter.gold_coins ?? 0)) {
+    await updateCharacterProgress(userId, character.character_id, {
+      gold_coins: nextCharacter.gold_coins ?? 0,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  return {
+    goldDelta: (nextCharacter.gold_coins ?? 0) - (character.gold_coins ?? 0),
+  };
+}
+
 async function persistHabitStatus({
   userId,
   habit,
@@ -480,6 +737,16 @@ async function persistHabitStatus({
     streak_at_log: streakAtLog,
     source: "manual",
   };
+  const userHabits = await fetchUserHabits(userId);
+
+  const previousTodayLogs = getLogsForDate(existingLogs, dateKey);
+  const previousTotalGold = computeTodayGoldTotal({
+    character,
+    todayLogs: previousTodayLogs,
+    allLogs: existingLogs,
+    userHabits,
+    dateKey,
+  });
 
   let savedLog = null;
 
@@ -488,7 +755,7 @@ async function persistHabitStatus({
       .from("habit_logs")
       .update(payload)
       .eq("log_id", todayLog.log_id)
-      .select("log_id")
+      .select("log_id, logged_at")
       .single();
 
     if (error) {
@@ -500,7 +767,7 @@ async function persistHabitStatus({
     const { data, error } = await supabase
       .from("habit_logs")
       .insert(payload)
-      .select("log_id")
+      .select("log_id, logged_at")
       .single();
 
     if (error) {
@@ -509,6 +776,34 @@ async function persistHabitStatus({
 
     savedLog = data;
   }
+
+  const nextLog = {
+    ...(todayLog ?? {}),
+    log_id: savedLog?.log_id ?? todayLog?.log_id ?? null,
+    habit_id: habit.habit_id,
+    log_date: dateKey,
+    status,
+    hp_change: hpChange,
+    exp_change: expChange,
+    streak_at_log: streakAtLog,
+    logged_at: savedLog?.logged_at ?? todayLog?.logged_at ?? new Date().toISOString(),
+  };
+  const nextLogs = buildNextLogs(existingLogs, todayLog, nextLog);
+  const nextCharacter = applyCharacterProgress(
+    character,
+    characterDelta.exp,
+    characterDelta.hp,
+    0,
+  );
+  const nextTodayLogs = getLogsForDate(nextLogs, dateKey);
+  const nextTotalGold = computeTodayGoldTotal({
+    character: nextCharacter,
+    todayLogs: nextTodayLogs,
+    allLogs: nextLogs,
+    userHabits,
+    dateKey,
+  });
+  const goldDelta = nextTotalGold - previousTotalGold;
 
   await Promise.all([
     syncHabitStreakRecord(userId, habit.habit_id, nextStreak),
@@ -519,6 +814,7 @@ async function persistHabitStatus({
         character,
         characterDelta.exp,
         characterDelta.hp,
+        goldDelta,
       ),
     ),
   ]);
@@ -529,6 +825,7 @@ async function persistHabitStatus({
     rewards: {
       exp: characterDelta.exp,
       hp: characterDelta.hp,
+      gold: goldDelta,
     },
     progress: {
       completedToday: isSuccessStatus(status),
@@ -549,21 +846,52 @@ async function clearTodayHabitStatus({
   existingLogs,
   todayLog,
   dateKey,
+  preserveExpOnClear = false,
 }) {
   if (!todayLog?.log_id) {
     return {
-      rewards: { exp: 0, hp: 0 },
+      rewards: { exp: 0, hp: 0, gold: 0 },
       progress: buildHabitProgressMap([habit], existingLogs, dateKey).get(habit.habit_id),
     };
   }
 
-  const { error } = await supabase
-    .from("habit_logs")
-    .delete()
-    .eq("log_id", todayLog.log_id);
+  const previousTodayLogs = getLogsForDate(existingLogs, dateKey);
+  const userHabits = await fetchUserHabits(userId);
+  const previousTotalGold = computeTodayGoldTotal({
+    character,
+    todayLogs: previousTodayLogs,
+    allLogs: existingLogs,
+    userHabits,
+    dateKey,
+  });
 
-  if (error) {
-    throw error;
+  const shouldPreserveExp =
+    preserveExpOnClear &&
+    isPositiveHabit(habit) &&
+    Number(todayLog.exp_change ?? 0) > 0;
+
+  if (shouldPreserveExp) {
+    const { error } = await supabase
+      .from("habit_logs")
+      .update({
+        status: "missed",
+        hp_change: 0,
+        streak_at_log: 0,
+      })
+      .eq("log_id", todayLog.log_id);
+
+    if (error) {
+      throw error;
+    }
+  } else {
+    const { error } = await supabase
+      .from("habit_logs")
+      .delete()
+      .eq("log_id", todayLog.log_id);
+
+    if (error) {
+      throw error;
+    }
   }
 
   const remainingSuccessfulDateKeys = getSuccessfulDateKeys(
@@ -576,6 +904,30 @@ async function clearTodayHabitStatus({
     remainingSuccessfulDateKeys,
     dateKey,
   );
+  const nextLog = shouldPreserveExp
+    ? {
+        ...todayLog,
+        status: "missed",
+        hp_change: 0,
+        streak_at_log: 0,
+      }
+    : null;
+  const nextLogs = buildNextLogs(existingLogs, todayLog, nextLog);
+  const nextCharacter = applyCharacterProgress(
+    character,
+    shouldPreserveExp ? 0 : -Number(todayLog.exp_change ?? 0),
+    -Number(todayLog.hp_change ?? 0),
+    0,
+  );
+  const nextTodayLogs = getLogsForDate(nextLogs, dateKey);
+  const nextTotalGold = computeTodayGoldTotal({
+    character: nextCharacter,
+    todayLogs: nextTodayLogs,
+    allLogs: nextLogs,
+    userHabits,
+    dateKey,
+  });
+  const goldDelta = nextTotalGold - previousTotalGold;
 
   await Promise.all([
     syncHabitStreakRecord(userId, habit.habit_id, nextStreak),
@@ -584,16 +936,18 @@ async function clearTodayHabitStatus({
       character.character_id,
       applyCharacterProgress(
         character,
-        -Number(todayLog.exp_change ?? 0),
+        shouldPreserveExp ? 0 : -Number(todayLog.exp_change ?? 0),
         -Number(todayLog.hp_change ?? 0),
+        goldDelta,
       ),
     ),
   ]);
 
   return {
     rewards: {
-      exp: -Number(todayLog.exp_change ?? 0),
+      exp: shouldPreserveExp ? 0 : -Number(todayLog.exp_change ?? 0),
       hp: -Number(todayLog.hp_change ?? 0),
+      gold: goldDelta,
     },
     progress: {
       completedToday: false,
@@ -607,7 +961,7 @@ async function clearTodayHabitStatus({
   };
 }
 
-function buildProgressResponse(habit, categoryMap, progress, rewards = { exp: 0, hp: 0 }) {
+function buildProgressResponse(habit, categoryMap, progress, rewards = { exp: 0, hp: 0, gold: 0 }) {
   return {
     habit: serializeHabit(habit, categoryMap, progress),
     rewards,
@@ -619,7 +973,7 @@ function buildCurrentProgressResponse(
   categoryMap,
   existingLogs,
   todayDateKey,
-  rewards = { exp: 0, hp: 0 },
+  rewards = { exp: 0, hp: 0, gold: 0 },
 ) {
   const progressMap = buildHabitProgressMap([habit], existingLogs, todayDateKey);
 
@@ -634,7 +988,7 @@ function buildCurrentProgressResponse(
 async function fetchCharacter(userId) {
   const { data, error } = await supabase
     .from("characters")
-    .select("character_id, level, current_hp, max_hp, current_exp, exp_to_next_level")
+    .select("character_id, level, current_hp, max_hp, current_exp, exp_to_next_level, gold_coins")
     .eq("user_id", userId)
     .single();
 
@@ -941,6 +1295,7 @@ router.delete("/:habitId/complete", requireUser, async (req, res) => {
       existingLogs,
       todayLog,
       dateKey: todayDateKey,
+      preserveExpOnClear: true,
     });
 
     return res.json(

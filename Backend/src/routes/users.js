@@ -38,6 +38,7 @@ function serializeUserProfile(user, character) {
     avatarUrl: buildVersionedAvatarUrl(user.avatar_url, avatarVersion),
     level,
     levelProgress,
+    goldCoins: character?.gold_coins ?? 0,
   };
 }
 
@@ -76,7 +77,7 @@ function normalizeAvatarUrl(avatarUrl) {
 async function loadCharacterProgress(userId) {
   const { data } = await supabase
     .from('characters')
-    .select('level, current_exp, exp_to_next_level')
+    .select('level, current_exp, exp_to_next_level, gold_coins')
     .eq('user_id', userId)
     .maybeSingle();
 
@@ -194,7 +195,7 @@ router.get('/me', requireUser, async (req, res) => {
         .single(),
       supabase
         .from('characters')
-        .select('level, current_exp, exp_to_next_level')
+        .select('level, current_exp, exp_to_next_level, gold_coins')
         .eq('user_id', req.userId)
         .single(),
     ]);

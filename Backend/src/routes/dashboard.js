@@ -112,7 +112,9 @@ router.get("/", requireUser, async (req, res) => {
         .eq("user_id", userId),
       supabase
         .from("characters")
-        .select("level, current_hp, max_hp, current_exp, exp_to_next_level")
+        .select(
+          "level, current_hp, max_hp, current_exp, exp_to_next_level, gold_coins",
+        )
         .eq("user_id", req.userId)
         .maybeSingle(),
     ]);

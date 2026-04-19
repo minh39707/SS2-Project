@@ -362,7 +362,15 @@ function summarizeDailyProgress(habits = [], progressMap, todayDateKey = toDateK
   };
 }
 
-function applyCharacterProgress(character, expChange = 0, hpChange = 0) {
+function getGoldPerTask(level = 1) {
+  return Math.min(10, 1 + Math.floor(Math.max(1, level) / 10));
+}
+
+function getDailyStreakGold(streak = 0) {
+  return Math.min(Math.max(0, streak), 50);
+}
+
+function applyCharacterProgress(character, expChange = 0, hpChange = 0, goldChange = 0) {
   const maxHp = Math.max(1, character?.max_hp ?? 100);
   const expToNextLevel = Math.max(1, character?.exp_to_next_level ?? 100);
   let level = Math.max(1, character?.level ?? 1);
@@ -391,6 +399,7 @@ function applyCharacterProgress(character, expChange = 0, hpChange = 0) {
       Math.min(maxHp, (character?.current_hp ?? maxHp) + hpChange),
     ),
     max_hp: maxHp,
+    gold_coins: Math.max(0, (character?.gold_coins ?? 0) + goldChange),
     updated_at: new Date().toISOString(),
   };
 }
@@ -402,6 +411,7 @@ function buildPlayerSummary(character, streak = 0) {
     maxHp: character?.max_hp ?? 100,
     currentExp: character?.current_exp ?? 0,
     expToNextLevel: character?.exp_to_next_level ?? 100,
+    goldCoins: character?.gold_coins ?? 0,
     streak,
   };
 }
@@ -447,4 +457,6 @@ module.exports = {
   isHabitScheduledOnDate,
   summarizeDailyProgress,
   toDateKey,
+  getGoldPerTask,
+  getDailyStreakGold,
 };

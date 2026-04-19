@@ -1,12 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { apiRequest } from "@/src/services/api";
 import { formatTimeLabel } from "@/src/utils/onboarding";
 
 const NOTIFICATION_CHANNEL_ID = "habit-reminders";
 const STORAGE_KEY_PREFIX = "habit-app:habit-notifications";
-const IOS_PROVISIONAL_STATUS = Notifications.IosAuthorizationStatus?.PROVISIONAL;
 const WEEKDAY_TO_NOTIFICATION_DAY = {
   sun: 1,
   mon: 2,
@@ -17,15 +16,47 @@ const WEEKDAY_TO_NOTIFICATION_DAY = {
   sat: 7,
 };
 
-if (Platform.OS !== "web") {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldPlaySound: false,
-      shouldSetBadge: false,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }),
-  });
+const isExpoGo = Constants.appOwnership === "expo";
+
+let notificationsModulePromise = null;
+let didConfigureNotificationHandler = false;
+
+async function getNotificationsModuleAsync() {
+  if (Platform.OS === "web" || isExpoGo) {
+    return null;
+  }
+
+  if (!notificationsModulePromise) {
+    notificationsModulePromise = import("expo-notifications")
+      .then((module) => {
+        const Notifications = module?.default ?? module;
+
+        if (!didConfigureNotificationHandler) {
+          Notifications.setNotificationHandler({
+            handleNotification: async () => ({
+              shouldPlaySound: false,
+              shouldSetBadge: false,
+              shouldShowBanner: true,
+              shouldShowList: true,
+            }),
+          });
+          didConfigureNotificationHandler = true;
+        }
+
+        return Notifications;
+      })
+      .catch((error) => {
+        notificationsModulePromise = null;
+
+        if (__DEV__) {
+          console.warn("Failed to load expo-notifications", error);
+        }
+
+        return null;
+      });
+  }
+
+  return notificationsModulePromise;
 }
 
 function getStorageKey(userId) {
@@ -121,7 +152,7 @@ function buildScheduleKey(habit, suffix) {
   ].join("::");
 }
 
-function buildReminderEntriesForHabit(habit) {
+function buildReminderEntriesForHabit(habit, Notifications) {
   const frequencyType = habit.frequencyType ?? "daily";
   const reminderTimes = normalizeReminderTimes(habit.reminders);
   const entries = [];
@@ -191,11 +222,13 @@ function buildReminderEntriesForHabit(habit) {
   return entries;
 }
 
-function buildReminderEntries(habits = []) {
-  return habits.flatMap((habit) => buildReminderEntriesForHabit(habit));
+function buildReminderEntries(habits = [], Notifications) {
+  return habits.flatMap((habit) =>
+    buildReminderEntriesForHabit(habit, Notifications),
+  );
 }
 
-async function ensureNotificationChannelAsync() {
+async function ensureNotificationChannelAsync(Notifications) {
   if (Platform.OS !== "android") {
     return;
   }
@@ -237,7 +270,7 @@ async function writeStoredNotificationMap(userId, entries) {
   );
 }
 
-async function cancelNotificationIds(notificationIds = []) {
+async function cancelNotificationIds(Notifications, notificationIds = []) {
   await Promise.all(
     notificationIds.map(async (notificationId) => {
       try {
@@ -251,17 +284,19 @@ async function cancelNotificationIds(notificationIds = []) {
   );
 }
 
-async function hasGrantedNotificationPermissionAsync() {
+async function hasGrantedNotificationPermissionAsync(Notifications) {
   const settings = await Notifications.getPermissionsAsync();
+  const iosProvisionalStatus =
+    Notifications.IosAuthorizationStatus?.PROVISIONAL;
 
   return (
     settings.granted ||
-    settings.ios?.status === IOS_PROVISIONAL_STATUS
+    settings.ios?.status === iosProvisionalStatus
   );
 }
 
-async function ensureNotificationPermissionAsync(requestPermissions) {
-  if (await hasGrantedNotificationPermissionAsync()) {
+async function ensureNotificationPermissionAsync(Notifications, requestPermissions) {
+  if (await hasGrantedNotificationPermissionAsync(Notifications)) {
     return true;
   }
 
@@ -277,7 +312,10 @@ async function ensureNotificationPermissionAsync(requestPermissions) {
     },
   });
 
-  return response.granted || response.ios?.status === IOS_PROVISIONAL_STATUS;
+  return (
+    response.granted ||
+    response.ios?.status === Notifications.IosAuthorizationStatus?.PROVISIONAL
+  );
 }
 
 async function loadHabitsForNotifications(userId, authToken) {
@@ -296,8 +334,15 @@ export async function clearManagedHabitNotifications(userId) {
     return;
   }
 
+  const Notifications = await getNotificationsModuleAsync();
+
+  if (!Notifications) {
+    await writeStoredNotificationMap(userId, {});
+    return;
+  }
+
   const storedEntries = await readStoredNotificationMap(userId);
-  await cancelNotificationIds(Object.values(storedEntries));
+  await cancelNotificationIds(Notifications, Object.values(storedEntries));
   await writeStoredNotificationMap(userId, {});
 }
 
@@ -314,16 +359,25 @@ export async function syncHabitNotificationsForUser({
     };
   }
 
-  await ensureNotificationChannelAsync();
+  const Notifications = await getNotificationsModuleAsync();
+
+  if (!Notifications) {
+    return {
+      permissionGranted: false,
+      scheduledCount: 0,
+    };
+  }
+
+  await ensureNotificationChannelAsync(Notifications);
 
   const resolvedHabits = Array.isArray(habits)
     ? habits
     : await loadHabitsForNotifications(userId, authToken);
-  const desiredEntries = buildReminderEntries(resolvedHabits);
+  const desiredEntries = buildReminderEntries(resolvedHabits, Notifications);
   const storedEntries = await readStoredNotificationMap(userId);
 
   if (desiredEntries.length === 0) {
-    await cancelNotificationIds(Object.values(storedEntries));
+    await cancelNotificationIds(Notifications, Object.values(storedEntries));
     await writeStoredNotificationMap(userId, {});
     return {
       permissionGranted: true,
@@ -332,11 +386,12 @@ export async function syncHabitNotificationsForUser({
   }
 
   const permissionGranted = await ensureNotificationPermissionAsync(
+    Notifications,
     requestPermissions,
   );
 
   if (!permissionGranted) {
-    await cancelNotificationIds(Object.values(storedEntries));
+    await cancelNotificationIds(Notifications, Object.values(storedEntries));
     await writeStoredNotificationMap(userId, {});
     return {
       permissionGranted: false,
@@ -366,7 +421,7 @@ export async function syncHabitNotificationsForUser({
     nextStoredEntries[scheduleKey] = notificationId;
   }
 
-  await cancelNotificationIds(staleNotificationIds);
+  await cancelNotificationIds(Notifications, staleNotificationIds);
 
   for (const entry of desiredEntries) {
     if (nextStoredEntries[entry.key]) {

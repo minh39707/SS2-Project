@@ -74,6 +74,27 @@ function buildUserResponse(user, profile = null, fallbackName = null) {
   };
 }
 
+function getProfileConflictMessage(error) {
+  const code = error?.code ?? error?.cause?.code ?? null;
+  const message = String(error?.message ?? "").toLowerCase();
+
+  if (
+    code === "23505" &&
+    (message.includes("users_email_key") || message.includes(" email "))
+  ) {
+    return "This email is already linked to another account. Please sign in with your existing method.";
+  }
+
+  if (
+    code === "23505" &&
+    (message.includes("users_username_key") || message.includes(" username "))
+  ) {
+    return "Unable to finish sign in because this username is already taken. Please try again.";
+  }
+
+  return null;
+}
+
 function buildStarterCharacter(userId, name) {
   return {
     user_id: userId,
@@ -182,7 +203,6 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
       userMetadata.full_name ||
       userEmail?.split("@")[0] ||
       "Player";
-    const preferredUsername = await buildUniqueUsername(displayName, userId);
 
     if (!userEmail) {
       return res.status(400).json({
@@ -211,12 +231,15 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
     }
 
     if (existingByUserId) {
+      const nextUsername =
+        existingByUserId.username ||
+        (await buildUniqueUsername(displayName, userId));
       const updateResult = await supabase
         .from("users")
         .update({
           email: userEmail,
-          username: preferredUsername,
-          avatar_url: existingByUserId.avatar_url || providerAvatarUrl,
+          username: nextUsername,
+          avatar_url: existingByUserId.avatar_url ?? providerAvatarUrl,
         })
         .eq("user_id", userId)
         .select()
@@ -249,6 +272,8 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
         });
       }
 
+      const preferredUsername = await buildUniqueUsername(displayName, userId);
+
       const insertResult = await supabase
         .from("users")
         .insert({
@@ -266,7 +291,13 @@ router.post("/oauth-sync", requireUser, async (req, res) => {
 
     if (profileError) {
       console.error("OAuth sync profile error:", profileError);
-      return res.status(500).json({ message: "Failed to sync user profile." });
+      return res.status((
+        getProfileConflictMessage(profileError) ? 409 : 500
+      )).json({
+        message:
+          getProfileConflictMessage(profileError) ??
+          "Failed to sync user profile.",
+      });
     }
 
     // 2. Ensure RPG character exists

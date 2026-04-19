@@ -331,14 +331,17 @@ export function OnboardingProvider({ children }) {
     setIsSaving(true);
     setSaveError(null);
     try {
-      const profile = await runSharedOAuthFlow(async () => {
-        const oauthProfile = await completeOAuthRedirect(redirectUrl);
-        await persistAuthenticatedProfile(
-          oauthProfile,
-          oauthProfile.authMethod ?? "oauth",
-        );
-        return oauthProfile;
-      });
+      // In Expo Go, the deep-link callback screen may be the only place that
+      // can safely finish the OAuth flow. Reset any in-flight initiation
+      // promise so the callback can finalize the session immediately instead of
+      // waiting on the browser-based promise to resolve.
+      oauthCompletionRef.current = null;
+
+      const profile = await completeOAuthRedirect(redirectUrl);
+      await persistAuthenticatedProfile(
+        profile,
+        profile.authMethod ?? "oauth",
+      );
       return profile;
     } catch (error) {
       setSaveError(

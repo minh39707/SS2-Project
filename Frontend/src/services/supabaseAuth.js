@@ -238,14 +238,32 @@ export async function signInWithOAuth(provider) {
     console.log(`[oauth:${provider}] authorizeUrl`, data.url);
   }
 
-  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo, {
-    // Best effort account isolation on iOS. This requests a private auth
-    // session so OAuth providers don't reuse the browser's normal cookies.
-    // Android custom tabs may still reuse the browser's existing cookies.
-    preferEphemeralSession: Platform.OS === "ios",
-  });
+  let result;
+
+  try {
+    result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo, {
+      // Best effort account isolation on iOS. This requests a private auth
+      // session so OAuth providers don't reuse the browser's normal cookies.
+      // Android custom tabs may still reuse the browser's existing cookies.
+      preferEphemeralSession: Platform.OS === "ios",
+    });
+  } catch (error) {
+    if (isExpoGo()) {
+      throw new Error(
+        `Google sign-in could not return to Expo Go. Add this exact URL to Supabase Redirect URLs and try again: ${redirectTo}`,
+      );
+    }
+
+    throw error;
+  }
 
   if (result.type !== "success" || !result.url) {
+    if (isExpoGo()) {
+      throw new Error(
+        `Google sign-in did not complete. In Supabase Auth > URL Configuration, add this exact Redirect URL: ${redirectTo}`,
+      );
+    }
+
     throw new Error("Sign in was canceled before it completed.");
   }
 

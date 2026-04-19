@@ -1,11 +1,22 @@
 import { useEffect, useRef } from "react";
 import { DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { Platform } from "react-native";
 import 'react-native-reanimated';
 import { colors } from '@/src/constants/colors';
 import { OnboardingProvider } from '@/src/store/OnboardingContext';
+
+const notificationsModule =
+  Platform.OS === "web" || Constants.appOwnership === "expo"
+    ? null
+    : require("expo-notifications");
+const useLastNotificationResponse =
+  notificationsModule?.useLastNotificationResponse ?? (() => null);
+const defaultNotificationActionIdentifier =
+  notificationsModule?.DEFAULT_ACTION_IDENTIFIER ?? "default";
+
 const navigationTheme = {
     ...DefaultTheme,
     colors: {
@@ -19,7 +30,7 @@ const navigationTheme = {
 };
 export default function RootLayout() {
     const router = useRouter();
-    const lastNotificationResponse = Notifications.useLastNotificationResponse();
+    const lastNotificationResponse = useLastNotificationResponse();
     const lastHandledNotificationIdRef = useRef(null);
 
     useEffect(() => {
@@ -28,7 +39,7 @@ export default function RootLayout() {
         const actionIdentifier = lastNotificationResponse?.actionIdentifier;
 
         if (
-            actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER ||
+            actionIdentifier !== defaultNotificationActionIdentifier ||
             !notificationId ||
             lastHandledNotificationIdRef.current === notificationId
         ) {

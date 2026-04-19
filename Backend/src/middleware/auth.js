@@ -1,4 +1,4 @@
-const { supabase } = require('../supabase');
+const { supabaseAuthVerifier } = require('../supabase');
 
 const AUTH_CACHE_TTL_MS = 60 * 1000;
 const authCache = new Map();
@@ -45,7 +45,7 @@ async function extractUserId(req, res, next) {
       }
       
       // Verify JWT with Supabase
-      const { data: { user }, error } = await supabase.auth.getUser(token);
+      const { data: { user }, error } = await supabaseAuthVerifier.auth.getUser(token);
       
       if (!error && user) {
         cacheAuth(token, user);
