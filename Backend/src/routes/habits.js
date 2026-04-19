@@ -1132,4 +1132,9 @@ router.delete("/:habitId", requireUser, async (req, res) => {
   }
 });
 
+router.aiHelpers = {
+  fetchHabitCompletionContext,
+  persistHabitStatus,
+};
+
 module.exports = router;

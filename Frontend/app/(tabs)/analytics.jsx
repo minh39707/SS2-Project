@@ -31,11 +31,11 @@ const RANGE_OPTIONS = [
 ];
 
 const HEATMAP_COLORS = {
-  0: "#E8E2D6",
-  1: "#D8E9AF",
-  2: "#AAD45F",
-  3: "#6DAA22",
-  4: "#2F5F14",
+  0: "#F1F5F9",
+  1: "#DBEAFE",
+  2: "#93C5FD",
+  3: "#2563EB",
+  4: "#1E3A8A",
 };
 
 const HEATMAP_DAY_GUIDES = [
@@ -53,6 +53,26 @@ const LONG_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   year: "numeric",
 });
+
+const ANALYTICS_COLORS = {
+  cardBackground: "#F8FBFF",
+  cardBorder: "#D6E2F6",
+  panelBackground: "#FFFFFF",
+  panelSoftBackground: "#EEF5FF",
+  pillBorder: "#D7E5FB",
+  divider: "#DCE6F2",
+  track: "#EEF3FA",
+  trackMuted: "#E6EEF8",
+  textStrong: "#1E293B",
+  textSoft: "#475569",
+  textMuted: "#64748B",
+  textDanger: "#9F1239",
+  heatmapOutOfRangeBackground: "#F8FAFC",
+  heatmapOutOfRangeBorder: "#D8E2EE",
+  heatmapTodayBorder: "#1E40AF",
+  heatmapEmptyBackground: "#EDF5FF",
+  heatmapEmptyBorder: "#CFE0FF",
+};
 
 function getCurrentCalendarYear() {
   return new Date().getFullYear();
@@ -163,8 +183,8 @@ function getRequiredAnalyticsPeriods(selectedRanges) {
 function getHeatmapCellStyle(day) {
   if (!day?.isInRange) {
     return {
-      backgroundColor: "#F7F3EB",
-      borderColor: "#EEE8DC",
+      backgroundColor: ANALYTICS_COLORS.heatmapOutOfRangeBackground,
+      borderColor: ANALYTICS_COLORS.heatmapOutOfRangeBorder,
       opacity: 0.55,
     };
   }
@@ -173,7 +193,7 @@ function getHeatmapCellStyle(day) {
 
   return {
     backgroundColor: baseColor,
-    borderColor: day?.isToday ? "#1D4ED8" : baseColor,
+    borderColor: day?.isToday ? ANALYTICS_COLORS.heatmapTodayBorder : baseColor,
   };
 }
 
@@ -303,7 +323,7 @@ function WeekdayLineChart({ data, maxCount }) {
               <G key={`y-${i}`}>
                 <Path
                   d={`M ${paddingLeft} ${label.y} L ${width - paddingRight} ${label.y}`}
-                  stroke="#E5E7EB"
+                  stroke={ANALYTICS_COLORS.divider}
                   strokeDasharray="4 4"
                   strokeWidth="1"
                 />
@@ -363,7 +383,7 @@ function CategoryDonut({ segments }) {
   const normalizedSegments =
     totalPercent > 0
       ? segments
-      : [{ label: "Other", percentage: 1, color: "#E5E7EB" }];
+      : [{ label: "Other", percentage: 1, color: ANALYTICS_COLORS.trackMuted }];
 
   return (
     <View style={styles.donutWrap}>
@@ -374,7 +394,7 @@ function CategoryDonut({ segments }) {
             cy={size / 2}
             fill="none"
             r={radius}
-            stroke="#ECE9E1"
+            stroke={ANALYTICS_COLORS.track}
             strokeWidth={strokeWidth}
           />
           {normalizedSegments.map((segment) => {
@@ -446,7 +466,11 @@ export default function AnalyticsScreen() {
   const [isCompletionsExpanded, setIsCompletionsExpanded] = useState(false);
   const [isStreaksExpanded, setIsStreaksExpanded] = useState(false);
   const hasLoadedScreenRef = useRef(false);
-  const isCompactLayout = width < 430;
+  const isPhoneLayout = width < 768;
+  const isCompactLayout = width < 520;
+  const isNarrowLayout = width < 390;
+  const shouldStackHeaderControls = width < 560;
+  const shouldStackSummaryStrip = width < 460;
 
   const loadAnalyticsBundle = useCallback(
     async (options = {}) =>
@@ -832,7 +856,13 @@ export default function AnalyticsScreen() {
   const displayStreaks = isStreaksExpanded ? streakHabits : streakHabits.slice(0, 5);
 
   const renderRangeSelector = (selectedRange, onSelectRange) => (
-    <View style={[styles.rangeRow, isCompactLayout && styles.rangeRowWrap]}>
+    <View
+      style={[
+        styles.rangeRow,
+        isCompactLayout && styles.rangeRowWrap,
+        isNarrowLayout && styles.rangeRowFill,
+      ]}
+    >
       {RANGE_OPTIONS.map((option) => {
         const selected = selectedRange === option.value;
 
@@ -842,6 +872,8 @@ export default function AnalyticsScreen() {
             onPress={() => onSelectRange(option.value)}
             style={({ pressed }) => [
               styles.rangePill,
+              isCompactLayout && styles.rangePillCompact,
+              isNarrowLayout && styles.rangePillFill,
               selected && styles.rangePillSelected,
               pressed && !selected && styles.rangePillPressed,
             ]}
@@ -867,7 +899,13 @@ export default function AnalyticsScreen() {
     ) : null;
 
   const renderHeatmapYearSelector = () => (
-    <View style={[styles.yearSelectorRow, isCompactLayout && styles.rangeRowWrap]}>
+    <View
+      style={[
+        styles.yearSelectorRow,
+        isCompactLayout && styles.rangeRowWrap,
+        shouldStackHeaderControls && styles.yearSelectorRowStack,
+      ]}
+    >
       {heatmapYears.map((year) => {
         const selected = selectedHeatmapYear === year;
 
@@ -891,6 +929,20 @@ export default function AnalyticsScreen() {
           </Pressable>
         );
       })}
+    </View>
+  );
+
+  const renderRangeControls = (selectedRange, period, chartKey) => (
+    <View
+      style={[
+        styles.headerControls,
+        shouldStackHeaderControls && styles.headerControlsStack,
+      ]}
+    >
+      {renderSectionLoadingBadge(period)}
+      {renderRangeSelector(selectedRange, (nextPeriod) =>
+        setChartRange(chartKey, nextPeriod),
+      )}
     </View>
   );
 
@@ -923,7 +975,7 @@ export default function AnalyticsScreen() {
 
       <Animated.View entering={FadeInDown.duration(320)}>
         <Card style={styles.heroCard}>
-          <View style={styles.controlsRow}>
+          <View style={[styles.controlsRow, isCompactLayout && styles.controlsRowStack]}>
             {renderRangeSelector(selectedRanges.overview, (period) =>
               setChartRange("overview", period),
             )}
@@ -957,7 +1009,12 @@ export default function AnalyticsScreen() {
             </View>
           </View>
 
-          <View style={styles.summaryStrip}>
+          <View
+            style={[
+              styles.summaryStrip,
+              shouldStackSummaryStrip && styles.summaryStripStack,
+            ]}
+          >
             <View style={styles.summaryStripItem}>
               <Text color="muted" variant="caption">
                 Good habits
@@ -966,7 +1023,12 @@ export default function AnalyticsScreen() {
                 {Math.round((goodSummary?.completionRate ?? 0) * 100)}%
               </Text>
             </View>
-            <View style={styles.summaryStripDivider} />
+            <View
+              style={[
+                styles.summaryStripDivider,
+                shouldStackSummaryStrip && styles.summaryStripDividerHorizontal,
+              ]}
+            />
             <View style={styles.summaryStripItem}>
               <Text color="muted" variant="caption">
                 Bad habits
@@ -975,7 +1037,12 @@ export default function AnalyticsScreen() {
                 {Math.round((badSummary?.avoidanceRate ?? 0) * 100)}%
               </Text>
             </View>
-            <View style={styles.summaryStripDivider} />
+            <View
+              style={[
+                styles.summaryStripDivider,
+                shouldStackSummaryStrip && styles.summaryStripDividerHorizontal,
+              ]}
+            />
             <View style={styles.summaryStripItem}>
                 <Text color="muted" variant="caption">
                   EXP gained
@@ -990,7 +1057,12 @@ export default function AnalyticsScreen() {
 
       <Animated.View entering={FadeInDown.duration(400).delay(40)}>
         <Card style={styles.heatmapCard}>
-          <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
+          <View
+            style={[
+              styles.cardHeader,
+              shouldStackHeaderControls && styles.cardHeaderStack,
+            ]}
+          >
             <View style={styles.cardHeaderCopy}>
               <Text style={styles.cardTitle} variant="subtitle">
                 YEARLY ACTIVITY MAP
@@ -1092,42 +1164,52 @@ export default function AnalyticsScreen() {
 
       <Animated.View
         entering={FadeInDown.duration(440).delay(70)}
-        style={[styles.dualGrid, isCompactLayout && styles.dualGridStack]}
+        style={[styles.dualGrid, isPhoneLayout && styles.dualGridStack]}
       >
-        <Card style={[styles.halfCard, isCompactLayout && styles.fullCard]}>
-          <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
+        <Card style={[styles.halfCard, isPhoneLayout && styles.fullCard]}>
+          <View
+            style={[
+              styles.cardHeader,
+              shouldStackHeaderControls && styles.cardHeaderStack,
+            ]}
+          >
             <View style={styles.cardHeaderCopy}>
               <Text style={styles.cardTitle} variant="subtitle">
                 BY DAY OF WEEK
               </Text>
               <Text color="muted" style={styles.chartDescription} variant="caption">
-                Biểu đồ này thống kê tần suất hoàn thành thói quen theo từng ngày trong tuần, giúp bạn nhận biết ngày nào mình hoạt động hiệu quả nhất.
+                See which weekdays you complete habits most often and spot the days when your routine is strongest.
               </Text>
             </View>
-            {renderSectionLoadingBadge(selectedRanges.weekday)}
-            {renderRangeSelector(selectedRanges.weekday, (period) =>
-              setChartRange("weekday", period),
+            {renderRangeControls(
+              selectedRanges.weekday,
+              selectedRanges.weekday,
+              "weekday",
             )}
           </View>
 
           <WeekdayLineChart data={weekdayBreakdown} maxCount={maxWeekdayCount} />
         </Card>
 
-        <Card style={[styles.halfCard, isCompactLayout && styles.fullCard]}>
-          <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
+        <Card style={[styles.halfCard, isPhoneLayout && styles.fullCard]}>
+          <View
+            style={[
+              styles.cardHeader,
+              shouldStackHeaderControls && styles.cardHeaderStack,
+            ]}
+          >
             <View style={styles.cardHeaderCopy}>
               <Text style={styles.cardTitle} variant="subtitle">
                 BY CATEGORY
               </Text>
-              {!isCompactLayout ? (
-                <Text color="muted" variant="caption">
-                  Successful log share
-                </Text>
-              ) : null}
+              <Text color="muted" variant="caption">
+                Successful log share
+              </Text>
             </View>
-            {renderSectionLoadingBadge(selectedRanges.category)}
-            {renderRangeSelector(selectedRanges.category, (period) =>
-              setChartRange("category", period),
+            {renderRangeControls(
+              selectedRanges.category,
+              selectedRanges.category,
+              "category",
             )}
           </View>
 
@@ -1178,7 +1260,12 @@ export default function AnalyticsScreen() {
 
       <Animated.View entering={FadeInDown.duration(480).delay(100)}>
         <Card style={styles.streakCard}>
-          <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
+          <View
+            style={[
+              styles.cardHeader,
+              shouldStackHeaderControls && styles.cardHeaderStack,
+            ]}
+          >
             <View style={styles.cardHeaderCopy}>
               <Text style={styles.cardTitle} variant="subtitle">
                 HABIT COMPLETIONS
@@ -1187,9 +1274,10 @@ export default function AnalyticsScreen() {
                 Successful check-ins for each habit in the selected period
               </Text>
             </View>
-            {renderSectionLoadingBadge(selectedRanges.completions)}
-            {renderRangeSelector(selectedRanges.completions, (period) =>
-              setChartRange("completions", period),
+            {renderRangeControls(
+              selectedRanges.completions,
+              selectedRanges.completions,
+              "completions",
             )}
           </View>
 
@@ -1270,7 +1358,12 @@ export default function AnalyticsScreen() {
 
       <Animated.View entering={FadeInDown.duration(520).delay(120)}>
         <Card style={styles.streakCard}>
-          <View style={[styles.cardHeader, isCompactLayout && styles.cardHeaderStack]}>
+          <View
+            style={[
+              styles.cardHeader,
+              shouldStackHeaderControls && styles.cardHeaderStack,
+            ]}
+          >
             <View style={styles.cardHeaderCopy}>
               <Text style={styles.cardTitle} variant="subtitle">
                 HABIT STREAKS
@@ -1364,8 +1457,8 @@ const styles = StyleSheet.create({
   heroCard: {
     padding: spacing.lg,
     gap: spacing.lg,
-    backgroundColor: "#FBFAF6",
-    borderColor: "#E6E0D5",
+    backgroundColor: ANALYTICS_COLORS.cardBackground,
+    borderColor: ANALYTICS_COLORS.cardBorder,
     borderWidth: 1,
     borderRadius: 28,
   },
@@ -1374,6 +1467,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     gap: spacing.md,
+  },
+  controlsRowStack: {
+    flexDirection: "column",
+    alignItems: "stretch",
   },
   sectionLoadingBadge: {
     minWidth: 20,
@@ -1385,8 +1482,8 @@ const styles = StyleSheet.create({
     height: 42,
     borderRadius: 21,
     borderWidth: 1,
-    borderColor: "#D8D8CF",
-    backgroundColor: "#FFFFFF",
+    borderColor: ANALYTICS_COLORS.pillBorder,
+    backgroundColor: ANALYTICS_COLORS.panelBackground,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1399,21 +1496,32 @@ const styles = StyleSheet.create({
   },
   rangeRowWrap: {
     flexWrap: "wrap",
+    width: "100%",
+  },
+  rangeRowFill: {
+    justifyContent: "space-between",
   },
   rangePill: {
     minWidth: 62,
     borderRadius: radii.pill,
     borderWidth: 1,
-    borderColor: "#D7DCD0",
-    backgroundColor: "#FFFFFF",
+    borderColor: ANALYTICS_COLORS.pillBorder,
+    backgroundColor: ANALYTICS_COLORS.panelBackground,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
+  rangePillCompact: {
+    minWidth: 0,
+  },
+  rangePillFill: {
+    flexBasis: "48%",
+    flexGrow: 1,
+  },
   rangePillSelected: {
-    backgroundColor: "#315F12",
-    borderColor: "#315F12",
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   rangePillPressed: {
     opacity: 0.86,
@@ -1433,22 +1541,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: radii.pill,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: ANALYTICS_COLORS.panelBackground,
     borderWidth: 1,
-    borderColor: "#E6E4DC",
+    borderColor: ANALYTICS_COLORS.cardBorder,
   },
   quickStatText: {
-    color: "#374151",
+    color: ANALYTICS_COLORS.textSoft,
     fontWeight: "700",
   },
   summaryStrip: {
     flexDirection: "row",
     alignItems: "stretch",
     borderRadius: 24,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: ANALYTICS_COLORS.panelBackground,
     borderWidth: 1,
-    borderColor: "#EAE7DE",
+    borderColor: ANALYTICS_COLORS.cardBorder,
     overflow: "hidden",
+  },
+  summaryStripStack: {
+    flexDirection: "column",
   },
   summaryStripItem: {
     flex: 1,
@@ -1458,10 +1569,14 @@ const styles = StyleSheet.create({
   },
   summaryStripDivider: {
     width: 1,
-    backgroundColor: "#ECE8DF",
+    backgroundColor: ANALYTICS_COLORS.divider,
+  },
+  summaryStripDividerHorizontal: {
+    width: "100%",
+    height: 1,
   },
   summaryStripValue: {
-    color: "#20231B",
+    color: ANALYTICS_COLORS.textStrong,
   },
   errorCard: {
     padding: spacing.md,
@@ -1474,13 +1589,13 @@ const styles = StyleSheet.create({
   },
   errorText: {
     flex: 1,
-    color: "#9F1239",
+    color: ANALYTICS_COLORS.textDanger,
   },
   heatmapCard: {
     padding: spacing.lg,
     gap: spacing.md,
-    backgroundColor: "#FBFAF6",
-    borderColor: "#E6E0D5",
+    backgroundColor: ANALYTICS_COLORS.cardBackground,
+    borderColor: ANALYTICS_COLORS.cardBorder,
     borderWidth: 1,
   },
   cardHeader: {
@@ -1491,14 +1606,28 @@ const styles = StyleSheet.create({
   },
   cardHeaderStack: {
     flexDirection: "column",
+    alignItems: "stretch",
   },
   cardHeaderCopy: {
     flex: 1,
     minWidth: 0,
     gap: 4,
   },
+  headerControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: spacing.sm,
+    flexShrink: 1,
+  },
+  headerControlsStack: {
+    width: "100%",
+    flexDirection: "column",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
+  },
   cardTitle: {
-    color: "#44403C",
+    color: ANALYTICS_COLORS.textStrong,
     letterSpacing: 0.5,
   },
   heatmapBody: {
@@ -1512,20 +1641,24 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     gap: 8,
   },
+  yearSelectorRowStack: {
+    width: "100%",
+    justifyContent: "flex-start",
+  },
   yearPill: {
     minWidth: 72,
     borderRadius: radii.pill,
     borderWidth: 1,
-    borderColor: "#D7DCD0",
-    backgroundColor: "#FFFFFF",
+    borderColor: ANALYTICS_COLORS.pillBorder,
+    backgroundColor: ANALYTICS_COLORS.panelBackground,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   yearPillSelected: {
-    backgroundColor: "#315F12",
-    borderColor: "#315F12",
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   heatmapYAxis: {
     width: 34,
@@ -1576,9 +1709,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
     borderRadius: 16,
-    backgroundColor: "#F4F8EF",
+    backgroundColor: ANALYTICS_COLORS.heatmapEmptyBackground,
     borderWidth: 1,
-    borderColor: "#DCEAC8",
+    borderColor: ANALYTICS_COLORS.heatmapEmptyBorder,
   },
   heatmapEmptyNoticeText: {
     flex: 1,
@@ -1613,8 +1746,8 @@ const styles = StyleSheet.create({
     minWidth: 158,
     padding: spacing.lg,
     gap: spacing.md,
-    backgroundColor: "#FBFAF6",
-    borderColor: "#E6E0D5",
+    backgroundColor: ANALYTICS_COLORS.cardBackground,
+    borderColor: ANALYTICS_COLORS.cardBorder,
     borderWidth: 1,
   },
   fullCard: {
@@ -1639,7 +1772,7 @@ const styles = StyleSheet.create({
     height: 124,
     borderRadius: 10,
     justifyContent: "flex-end",
-    backgroundColor: "#EFEEE7",
+    backgroundColor: ANALYTICS_COLORS.trackMuted,
     overflow: "hidden",
   },
   weekdayBar: {
@@ -1647,7 +1780,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   weekdayLabel: {
-    color: "#52525B",
+    color: ANALYTICS_COLORS.textSoft,
     fontWeight: "700",
   },
   categoryBody: {
@@ -1677,13 +1810,13 @@ const styles = StyleSheet.create({
     width: 70,
     height: 70,
     borderRadius: 35,
-    backgroundColor: "#FBFAF6",
+    backgroundColor: ANALYTICS_COLORS.panelBackground,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
   },
   donutCenterValue: {
-    color: "#292524",
+    color: ANALYTICS_COLORS.textStrong,
   },
   donutCenterLabel: {
     textTransform: "uppercase",
@@ -1722,7 +1855,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   categoryPercent: {
-    color: "#27272A",
+    color: ANALYTICS_COLORS.textStrong,
     fontWeight: "700",
     width: 40,
     textAlign: "right",
@@ -1730,17 +1863,17 @@ const styles = StyleSheet.create({
   streakCard: {
     padding: spacing.lg,
     gap: spacing.md,
-    backgroundColor: "#FBFAF6",
-    borderColor: "#E6E0D5",
+    backgroundColor: ANALYTICS_COLORS.cardBackground,
+    borderColor: ANALYTICS_COLORS.cardBorder,
     borderWidth: 1,
   },
   arrowBadge: {
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: ANALYTICS_COLORS.panelBackground,
     borderWidth: 1,
-    borderColor: "#E4E2DA",
+    borderColor: ANALYTICS_COLORS.cardBorder,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1761,7 +1894,7 @@ const styles = StyleSheet.create({
   streakBarTrack: {
     height: 6,
     borderRadius: radii.pill,
-    backgroundColor: "#ECE8DF",
+    backgroundColor: ANALYTICS_COLORS.track,
     overflow: "hidden",
   },
   streakBarFill: {
@@ -1781,7 +1914,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   streakValue: {
-    color: "#27272A",
+    color: ANALYTICS_COLORS.textStrong,
     fontWeight: "700",
   },
   expandButton: {
@@ -1793,11 +1926,11 @@ const styles = StyleSheet.create({
     marginTop: 4,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E6E4DC",
-    backgroundColor: "#FFFFFF",
+    borderColor: ANALYTICS_COLORS.cardBorder,
+    backgroundColor: ANALYTICS_COLORS.panelBackground,
   },
   expandButtonPressed: {
-    backgroundColor: "#F9F9F7",
+    backgroundColor: ANALYTICS_COLORS.panelSoftBackground,
   },
   expandButtonText: {
     color: colors.primary,

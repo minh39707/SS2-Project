@@ -33,6 +33,8 @@ These behaviors are already implemented and should be preserved unless intention
 - Time-based habits use a focus-timer flow instead of instant completion.
 - Home no longer limits `Your Habits` to 4 items.
 - The floating coach bubble is compact, draggable, and icon-only.
+- Analytics initial load was optimized to avoid fetching every period eagerly.
+- Backend analytics now supports bundled period requests.
 - Frontend lint had been cleaned up and should stay clean.
 
 ## 4. Repo Structure
@@ -57,6 +59,8 @@ These behaviors are already implemented and should be preserved unless intention
   - `Frontend/src/services/supabaseAuth.js`
   - `Frontend/src/services/onboardingStorage.js`
   - `Frontend/src/services/resourceCache.js`
+- Analytics tab:
+  - `Frontend/app/(tabs)/analytics.jsx`
 - Shared utilities:
   - `Frontend/src/utils/habitActions.js`
   - `Frontend/src/utils/habitTimer.js`
@@ -124,17 +128,26 @@ Run:
 ```bash
 cd Frontend
 npm install
-npx expo start -c
+npm start
 ```
 
 Useful commands:
 
 ```bash
+npm start
+npm run configure:lan
+npm run configure:emulator
 npm run android
 npm run android:emulator
 npm run android:lan
 npm run lint
 ```
+
+Important note:
+
+- `npm start` runs `configure:lan` first and refreshes `Frontend/.env.local`.
+- direct `npx expo start -c`, `npm run android`, `npm run ios`, and `npm run web` do not refresh `.env.local` automatically.
+- if the frontend suddenly fails to reach the backend after a network change, rerun `npm run configure:lan`.
 
 ## 6. Backend URL Resolution
 
@@ -156,10 +169,12 @@ The frontend probes `/api/health` and uses the first healthy backend candidate.
 - Expo app scheme is `project`.
 - Frontend OAuth callback logic lives in `Frontend/src/services/supabaseAuth.js`.
 - Callback route is `auth-callback`.
-- Current mobile callback expectation:
+- `supabaseAuth.js` now uses `expo-auth-session` to build redirect URLs.
+- Current mobile callback expectation depends on runtime:
 
 ```txt
-project://auth-callback
+Development build / standalone app: project://auth-callback
+Expo Go: exp://<lan-ip>:<expo-port>/--/auth-callback
 ```
 
 For Supabase Auth URL Configuration, the minimal required setting is:
@@ -167,6 +182,11 @@ For Supabase Auth URL Configuration, the minimal required setting is:
 ```txt
 Site URL: project://auth-callback
 ```
+
+Expo Go caveat:
+
+- Supabase `Redirect URLs` must also allow the real `exp://.../--/auth-callback` URL generated at runtime.
+- If OAuth works in a build but fails in Expo Go, inspect the redirect URL logged by the app and update Supabase accordingly.
 
 Important note:
 
@@ -179,9 +199,10 @@ Important note:
 
 - `api.js` is the shared fetch client and backend URL resolver.
 - `habit.service.js` wraps habit/dashboard HTTP calls and cache invalidation.
-- `user.service.js` wraps user profile/stat requests and cache updates.
+- `user.service.js` wraps user profile/stat/analytics requests and cache updates.
 - `resourceCache.js` is a lightweight in-memory cache helper.
 - `onboardingStorage.js` stores onboarding state in AsyncStorage.
+- analytics cache keys are period-based, and the frontend can now request a bundled analytics payload for multiple periods in one backend call.
 
 ### Habit actions
 
@@ -229,6 +250,11 @@ Mounted in `Backend/src/index.js`:
 - `/api/habits`
 - `/api/health`
 
+`/api/users/me/analytics` now supports:
+
+- single-period requests via `period=...`
+- bundled requests via `periods=day,week,month,year`
+
 ### Business logic ownership
 
 Backend is the source of truth for:
@@ -237,6 +263,7 @@ Backend is the source of truth for:
 - streak calculation
 - EXP / HP / level progression
 - dashboard aggregation
+- analytics aggregation
 - profile persistence
 - onboarding habit sync
 
@@ -277,6 +304,12 @@ If editing those files, prefer extending the shared helpers rather than reintrod
 3. Frontend completes OAuth session handoff.
 4. App redirects into main tabs once auth is resolved.
 
+### Analytics
+
+1. Analytics tab loads only the currently needed periods plus the yearly heatmap payload.
+2. Backend can return multiple periods in one request to reduce repeated Supabase reads.
+3. Frontend caches analytics by period and lazy-loads new periods only when the user switches range filters.
+
 ## 11. Recommended Regression Checks
 
 After making changes, verify these manually:
@@ -285,11 +318,13 @@ After making changes, verify these manually:
 - frontend starts on emulator or LAN
 - email auth still works
 - OAuth still returns to `auth-callback`
+- Expo Go OAuth still redirects correctly after any auth-related change
 - creating a normal habit still works
 - creating a time-based habit still works
 - time-based habit enters focus mode
 - normal habit can complete and undo
 - time-based habit does not instantly complete on first tap
+- analytics tab still loads quickly and range switching still works
 - Home shows all habits, not only 4
 - coach bubble still opens and can be dragged
 
@@ -309,6 +344,7 @@ Reasonable next tasks for a new agent:
 - add a documented test checklist or smoke test script
 - improve UI polish for focus mode and reward feedback
 - add stronger backend validation around habit units and target values
+- profile and measure startup/Home/Manage Habits load time the same way analytics was optimized
 - add dedicated tests if the repo later adopts a test runner
 
 ## 14. Working Style Recommendation For Future Agents

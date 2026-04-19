@@ -96,8 +96,8 @@ function buildNotificationContent(habit, reminderTime) {
   return {
     title:
       habit.habitType === "negative"
-        ? `Check-in thoi quen: ${habit.title}`
-        : `Nho thuc hien: ${habit.title}`,
+        ? `Check-in thói quen: ${habit.title}`
+        : `Nhớ thực hiện: ${habit.title}`,
     body: getReminderBody(habit, reminderTime),
     sound: false,
     data: {

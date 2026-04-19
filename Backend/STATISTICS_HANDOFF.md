@@ -1,11 +1,7 @@
 # Statistics And Analytics Handoff
-
 This document is for agents who need to understand or change the current statistics, dashboard, and analytics behavior.
-
 ## 1. Read This First
-
 Primary backend files:
-
 - `Backend/src/routes/dashboard.js`
 - `Backend/src/routes/users.js`
 - `Backend/src/routes/habits.js`
@@ -18,40 +14,26 @@ Primary frontend consumers:
 - `Frontend/src/services/habit.service.js`
 - `Frontend/src/services/user.service.js`
 - `Frontend/src/screens/home/HomeScreen.jsx`
-
 ## 2. Main API Surfaces
-
 ### `GET /api/dashboard`
-
 Purpose:
-
 - home screen data
 - quick actions for habits
 - weekly calendar state
 - compact HP / EXP / Streak cards
 - daily completion summary
-
 Source:
-
 - habits
 - habit logs
 - character progress
-
 ### `GET /api/users/me/stats`
-
 Purpose:
-
 - lightweight HP / EXP / Streak cards only
-
 Source:
-
 - characters
 - global streak derived from habit logs
-
-### `GET /api/users/me/analytics?period=week|month|year`
-
+### `GET /api/users/me/analytics?days=7|30|...`
 Purpose:
-
 - richer analytics screen payload
 - summary counters
 - day-by-day trend
@@ -60,20 +42,12 @@ Purpose:
 - category breakdown
 - weekday breakdown
 - 26-week heatmap
-
 Source:
-
 - habits
 - habit logs
 - habit categories
 - characters
 - users profile
-
-Query behavior:
-
-- `period=day|week|month|year` returns the current calendar window for that period
-- `days=<1-90>` returns a rolling trailing window ending today
-- frontend currently uses `period`
 
 ## 3. Database Tables That Actually Matter
 
@@ -205,11 +179,11 @@ Relevant columns:
 - `category_id`
 - `name`
 
-### Removed table note
+### Table that exists but is not the current source of truth
 
 #### `analytics_daily`
 
-This table used to exist as an idea for precomputed daily analytics, but it has been removed from the live Supabase database.
+This table exists in schema, but current backend analytics endpoints do not read from it.
 
 Current analytics payload is marked as:
 
@@ -218,7 +192,7 @@ Current analytics payload is marked as:
 Meaning:
 
 - dashboard/stats/analytics are computed on demand from `habits`, `habit_logs`, `characters`, and category labels
-- if a future agent wants precomputed analytics, that would be a new architecture change rather than restoring previous behavior
+- if another agent updates `analytics_daily`, that will not automatically change the app behavior unless routes are refactored to read it
 
 ## 4. Core Logic Ownership
 
@@ -361,12 +335,11 @@ Main sections:
 - `generatedAt`
 - `source`
 
-The analytics range query is normalized:
+The `days` query is normalized:
 
-- `period` is used as-is when valid
-- otherwise `days` defaults to `7`
-- `days` minimum is `1`
-- `days` maximum is `90`
+- default `7`
+- minimum `1`
+- maximum `90`
 
 ## 6. Analytics Breakdown Definitions
 
@@ -459,11 +432,9 @@ Important:
 
 ## 7. Important Caveats For Future Agents
 
-### `analytics_daily` has been removed
+### `analytics_daily` is currently unused
 
-It is not part of the current live data flow.
-
-If you want precomputed analytics later, that is a future architectural change, not the current implementation.
+If you want precomputed analytics, that is a future architectural change, not the current implementation.
 
 ### Description text is part of the data model
 
@@ -564,7 +535,7 @@ If another agent wants the shortest possible explanation:
 - `habits.js` mutates logs and character progress
 - `dashboard.js` builds home-screen stats
 - `userAnalytics.js` builds analytics screen data
-- `analytics_daily` was removed; analytics are derived live today
+- `analytics_daily` exists in schema but is not the live source today
 
 ## 11. Useful Debug SQL
 

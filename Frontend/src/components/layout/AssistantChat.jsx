@@ -18,20 +18,22 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, shadows, spacing } from "@/src/constants/theme";
+import { sendAiChatMessage } from "@/src/services/ai.service";
 
 const starterMessages = [
   {
     id: "welcome",
     role: "assistant",
-    text: "Hi! I can help you protect your streak, simplify today's task, or suggest a better habit.",
+    text: "Minh co the giai thich tinh nang, goi y thoi quen, hoac nhan check-in bang chat cho ban.",
   },
 ];
 
 const defaultQuickPrompts = [
-  "Protect my streak",
-  "Suggest an easier version",
-  "Plan tonight's routine",
+  "Giu streak the nao?",
+  "Goi y ban de hon",
+  "Toi nay nen lam gi?",
 ];
+
 const chatGptSegmentRotations = [
   "0deg",
   "60deg",
@@ -79,48 +81,10 @@ function ChatGptGlyph({ size = 22, color = colors.surface, accentColor = colors.
   );
 }
 
-function normalizeText(value) {
-  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-function buildAssistantReply(input) {
-  const normalized = normalizeText(input);
-
-  if (normalized.includes("streak")) {
-    return "Protect your streak with the smallest possible win first. Do a 5-minute version now, then build from there.";
-  }
-
-  if (
-    normalized.includes("water") ||
-    normalized.includes("drink") ||
-    normalized.includes("nuoc")
-  ) {
-    return "Tie water to a trigger. Drink one glass after waking up, one before lunch, and one before dinner.";
-  }
-
-  if (
-    normalized.includes("easy") ||
-    normalized.includes("simpl") ||
-    normalized.includes("nho")
-  ) {
-    return "Shrink today's task until it feels easy to start. A 2-minute version still protects your momentum.";
-  }
-
-  if (
-    normalized.includes("night") ||
-    normalized.includes("routine") ||
-    normalized.includes("toi")
-  ) {
-    return "Try a 3-step evening flow: put your phone away, prepare tomorrow's essentials, and sleep at a fixed time.";
-  }
-
-  return "Focus on one small win first. Once you complete that, EXP and streak progress become much easier to maintain.";
-}
-
 export default function AssistantChat({
   variant = "inline",
   title = "AI Habit Coach",
-  subtitle = "Get practical suggestions to keep your mission, reward, and streak moving.",
+  subtitle = "Hoi ve app, xin loi khuyen, hoac check-in thoi quen bang chat.",
   quickPrompts = defaultQuickPrompts,
 }) {
   const insets = useSafeAreaInsets();
@@ -128,6 +92,7 @@ export default function AssistantChat({
   const [isOpen, setIsOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState(starterMessages);
+  const [isSending, setIsSending] = useState(false);
   const chatHeight = Math.min(height * 0.58, 460);
   const bubbleWidth = 58;
   const bubbleHeight = 58;
@@ -136,17 +101,12 @@ export default function AssistantChat({
   const minBubbleX = bubbleMargin;
   const maxBubbleX = Math.max(bubbleMargin, width - bubbleWidth - bubbleMargin);
   const minBubbleY = Math.max(insets.top + 86, bubbleMargin + 12);
-  const maxBubbleY = Math.max(
-    minBubbleY,
-    height - bubbleBottom - bubbleHeight,
-  );
+  const maxBubbleY = Math.max(minBubbleY, height - bubbleBottom - bubbleHeight);
   const defaultBubblePosition = {
     x: maxBubbleX,
     y: maxBubbleY,
   };
-  const bubblePosition = useRef(
-    new Animated.ValueXY(defaultBubblePosition),
-  ).current;
+  const bubblePosition = useRef(new Animated.ValueXY(defaultBubblePosition)).current;
   const bubbleOffsetRef = useRef(defaultBubblePosition);
   const dragStartRef = useRef(defaultBubblePosition);
 
@@ -164,10 +124,10 @@ export default function AssistantChat({
     setIsOpen(true);
   };
 
-  const sendMessage = (nextDraft) => {
+  const sendMessage = async (nextDraft) => {
     const content = (nextDraft ?? draft).trim();
 
-    if (!content) {
+    if (!content || isSending) {
       return;
     }
 
@@ -178,15 +138,55 @@ export default function AssistantChat({
       role: "user",
       text: content,
     };
-    const assistantMessage = {
-      id: `${now}-assistant`,
-      role: "assistant",
-      text: buildAssistantReply(content),
-    };
+    const pendingMessageId = `${now}-assistant-pending`;
 
-    setMessages((current) => [...current, userMessage, assistantMessage]);
+    setMessages((current) => [
+      ...current,
+      userMessage,
+      {
+        id: pendingMessageId,
+        role: "assistant",
+        text: "Minh dang suy nghi...",
+      },
+    ]);
     setDraft("");
     setIsOpen(true);
+    setIsSending(true);
+
+    try {
+      const response = await sendAiChatMessage(content, {
+        conversationId: "assistant-chat",
+      });
+      const replyText = response.clarification_needed
+        ? response.clarification_question ?? response.reply
+        : response.reply;
+
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === pendingMessageId
+            ? {
+                id: `${now}-assistant`,
+                role: "assistant",
+                text: replyText,
+              }
+            : message,
+        ),
+      );
+    } catch {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === pendingMessageId
+            ? {
+                id: `${now}-assistant-error`,
+                role: "assistant",
+                text: "Minh chua ket noi duoc AI luc nay. Ban thu lai sau mot chut nhe.",
+              }
+            : message,
+        ),
+      );
+    } finally {
+      setIsSending(false);
+    }
   };
 
   useEffect(() => {
@@ -237,6 +237,23 @@ export default function AssistantChat({
     [bubblePosition, clampBubbleX, clampBubbleY],
   );
 
+  const renderPromptChip = (prompt) => (
+    <Pressable
+      key={prompt}
+      disabled={isSending}
+      onPress={() => void sendMessage(prompt)}
+      style={({ pressed }) => [
+        styles.promptChip,
+        isSending && styles.promptChipDisabled,
+        pressed && styles.promptChipPressed,
+      ]}
+    >
+      <Text color="primary" variant="caption">
+        {prompt}
+      </Text>
+    </Pressable>
+  );
+
   const trigger =
     variant === "floating" ? (
       <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
@@ -247,10 +264,7 @@ export default function AssistantChat({
             {
               width: bubbleWidth,
               height: bubbleHeight,
-              transform: [
-                { translateX: bubblePosition.x },
-                { translateY: bubblePosition.y },
-              ],
+              transform: [{ translateX: bubblePosition.x }, { translateY: bubblePosition.y }],
             },
           ]}
         >
@@ -263,11 +277,7 @@ export default function AssistantChat({
       <View style={styles.inlineCard}>
         <View style={styles.inlineHeader}>
           <View style={styles.inlineIconWrap}>
-            <ChatGptGlyph
-              accentColor="#EEF5FF"
-              color={colors.primary}
-              size={18}
-            />
+            <ChatGptGlyph accentColor="#EEF5FF" color={colors.primary} size={18} />
           </View>
           <View style={styles.inlineCopy}>
             <Text variant="subtitle">{title}</Text>
@@ -277,22 +287,7 @@ export default function AssistantChat({
           </View>
         </View>
 
-        <View style={styles.promptRow}>
-          {quickPrompts.map((prompt) => (
-            <Pressable
-              key={prompt}
-              onPress={() => sendMessage(prompt)}
-              style={({ pressed }) => [
-                styles.promptChip,
-                pressed && styles.promptChipPressed,
-              ]}
-            >
-              <Text color="primary" variant="caption">
-                {prompt}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <View style={styles.promptRow}>{quickPrompts.map(renderPromptChip)}</View>
 
         <Pressable
           onPress={openChat}
@@ -313,12 +308,7 @@ export default function AssistantChat({
     <>
       {trigger}
 
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setIsOpen(false)}
-        transparent
-        visible={isOpen}
-      >
+      <Modal animationType="fade" onRequestClose={() => setIsOpen(false)} transparent visible={isOpen}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={styles.modalRoot}
@@ -338,29 +328,21 @@ export default function AssistantChat({
               <View style={styles.chatHeaderCopy}>
                 <Text variant="subtitle">{title}</Text>
                 <Text color="muted" variant="caption">
-                  Short, practical suggestions for habits, streaks, and daily flow.
+                  Hoi ve thoi quen, streak, va cac buoc nho de giu tien do moi ngay.
                 </Text>
               </View>
-              <Pressable
-                onPress={() => setIsOpen(false)}
-                style={styles.closeButton}
-              >
+              <Pressable onPress={() => setIsOpen(false)} style={styles.closeButton}>
                 <Ionicons color={colors.textMuted} name="close" size={18} />
               </Pressable>
             </View>
 
-            <ScrollView
-              contentContainerStyle={styles.messageList}
-              showsVerticalScrollIndicator={false}
-            >
+            <ScrollView contentContainerStyle={styles.messageList} showsVerticalScrollIndicator={false}>
               {messages.map((message) => (
                 <View
                   key={message.id}
                   style={[
                     styles.messageBubble,
-                    message.role === "user"
-                      ? styles.userMessage
-                      : styles.assistantMessage,
+                    message.role === "user" ? styles.userMessage : styles.assistantMessage,
                   ]}
                 >
                   <Text
@@ -374,33 +356,23 @@ export default function AssistantChat({
               ))}
             </ScrollView>
 
-            <View style={styles.promptRow}>
-              {quickPrompts.map((prompt) => (
-                <Pressable
-                  key={prompt}
-                  onPress={() => sendMessage(prompt)}
-                  style={({ pressed }) => [
-                    styles.promptChip,
-                    pressed && styles.promptChipPressed,
-                  ]}
-                >
-                  <Text color="primary" variant="caption">
-                    {prompt}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+            <View style={styles.promptRow}>{quickPrompts.map(renderPromptChip)}</View>
 
             <View style={styles.inputRow}>
               <TextInput
+                editable={!isSending}
                 onChangeText={setDraft}
-                onSubmitEditing={() => sendMessage()}
-                placeholder="Ask for a suggestion..."
+                onSubmitEditing={() => void sendMessage()}
+                placeholder="Hoi hoac check-in thoi quen..."
                 placeholderTextColor={colors.textMuted}
                 style={styles.input}
                 value={draft}
               />
-              <Pressable onPress={() => sendMessage()} style={styles.sendButton}>
+              <Pressable
+                disabled={isSending}
+                onPress={() => void sendMessage()}
+                style={[styles.sendButton, isSending && styles.sendButtonDisabled]}
+              >
                 <Ionicons color={colors.surface} name="send" size={18} />
               </Pressable>
             </View>
@@ -545,6 +517,9 @@ const styles = StyleSheet.create({
   promptChipPressed: {
     opacity: 0.85,
   },
+  promptChipDisabled: {
+    opacity: 0.5,
+  },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -566,5 +541,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
+  },
+  sendButtonDisabled: {
+    opacity: 0.6,
   },
 });
