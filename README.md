@@ -33,20 +33,88 @@ npm install
 
 2. Create environment files.
 
-Backend: `Backend/.env`
+## Environment Files
+
+This repo uses separate environment files for backend and frontend.
+
+Required files:
+
+- `Backend/.env`
+- `Frontend/.env`
+
+Optional machine-specific file:
+
+- `Frontend/.env.local`
+
+### `Backend/.env`
+
+Create `Backend/.env` with:
 
 ```env
 PORT=4000
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_CHAT_MODEL=gemini-2.5-flash
+GEMINI_TASK_MODEL=gemini-2.5-flash
 ```
 
-Frontend: `Frontend/.env`
+Backend variable notes:
+
+- `PORT`: local Express port, defaults to `4000`
+- `SUPABASE_URL`: your Supabase project URL
+- `SUPABASE_SERVICE_ROLE_KEY`: required by the backend for admin database access
+- `GEMINI_API_KEY`: required for AI chat, quest generation, and analytics insight routes
+- `GEMINI_MODEL`: default Gemini model for all AI routes
+- `GEMINI_CHAT_MODEL`: optional override for `/api/ai/chat`
+- `GEMINI_TASK_MODEL`: optional override for `/api/ai/quest/generate` and `/api/ai/insight`
+
+Gemini note:
+
+- The backend-only Gemini integration uses `GEMINI_API_KEY`
+- This key should stay only in `Backend/.env`
+- Do not expose it in frontend env files
+- Gemini can be used on a free tier depending on your Google AI Studio account and current quota
+
+### `Frontend/.env`
+
+Create `Frontend/.env` with:
 
 ```env
 EXPO_PUBLIC_SUPABASE_URL=your_supabase_project_url
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
+
+Frontend variable notes:
+
+- `EXPO_PUBLIC_SUPABASE_URL`: required
+- `EXPO_PUBLIC_SUPABASE_ANON_KEY`: required
+- the frontend does not need a Gemini API key because AI calls go through the backend
+
+### `Frontend/.env.local`
+
+`Frontend/.env.local` is optional and machine-specific.
+
+Typical contents:
+
+```env
+EXPO_PUBLIC_API_HOST=192.168.1.10
+EXPO_PUBLIC_API_PORT=4000
+EXPO_PUBLIC_API_SCHEME=http
+```
+
+Or, if you want to pin one exact backend URL:
+
+```env
+EXPO_PUBLIC_API_URL=http://192.168.1.10:4000/api
+```
+
+Notes:
+
+- `Frontend/.env.local` is normally generated or refreshed by the frontend scripts
+- this file should remain local to each machine
+- rerun `npm run configure:lan` after Wi-Fi or LAN IP changes
 
 3. Start the backend:
 
@@ -69,6 +137,20 @@ npm start
 ```
 
 `npm start` is recommended here because it runs `configure:lan` first and refreshes `Frontend/.env.local` with your current LAN IP before Expo starts.
+
+## API Keys Summary
+
+The project currently uses these external keys:
+
+- `SUPABASE_SERVICE_ROLE_KEY` in `Backend/.env`
+- `EXPO_PUBLIC_SUPABASE_ANON_KEY` in `Frontend/.env`
+- `GEMINI_API_KEY` in `Backend/.env`
+
+Important:
+
+- keep backend secrets only in `Backend/.env`
+- never commit real keys into README or git
+- frontend `EXPO_PUBLIC_*` values are visible to the app runtime, so only public-safe values belong there
 
 ## Frontend Start Modes
 
