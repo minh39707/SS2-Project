@@ -102,7 +102,6 @@ CREATE TABLE public.habit_logs (
   habit_id uuid NOT NULL,
   user_id uuid NOT NULL,
   log_date date NOT NULL,
-  status USER-DEFINED NOT NULL,
   value_recorded numeric,
   hp_change integer NOT NULL DEFAULT 0,
   exp_change integer NOT NULL DEFAULT 0,
@@ -111,8 +110,9 @@ CREATE TABLE public.habit_logs (
   ai_message_id uuid,
   notes text,
   logged_at timestamp with time zone NOT NULL DEFAULT now(),
+  status USER-DEFINED NOT NULL,
+  gold_change integer NOT NULL DEFAULT 0,
   CONSTRAINT habit_logs_pkey PRIMARY KEY (log_id),
-  CONSTRAINT habit_logs_habit_id_log_date_key UNIQUE (habit_id, log_date),
   CONSTRAINT habit_logs_ai_message_id_fkey FOREIGN KEY (ai_message_id) REFERENCES public.ai_messages(message_id),
   CONSTRAINT habit_logs_habit_id_fkey FOREIGN KEY (habit_id) REFERENCES public.habits(habit_id),
   CONSTRAINT habit_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id)

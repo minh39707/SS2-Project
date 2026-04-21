@@ -32,7 +32,7 @@ function normalizeChatResponse(response) {
     reply:
       typeof response?.reply === "string" && response.reply.trim()
         ? response.reply.trim()
-        : "Minh chua phan hoi duoc ro rang, ban thu noi cu the hon nhe.",
+        : "Minh chưa phản hồi được rõ ràng, bạn thử nói cụ thể hơn nhé.",
     actions: Array.isArray(response?.actions) ? response.actions : [],
     clarification_needed: response?.clarification_needed === true,
     clarification_question:

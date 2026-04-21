@@ -28,12 +28,6 @@ const starterMessages = [
   },
 ];
 
-const defaultQuickPrompts = [
-  "Giu streak the nao?",
-  "Goi y ban de hon",
-  "Toi nay nen lam gi?",
-];
-
 const chatGptSegmentRotations = [
   "0deg",
   "60deg",
@@ -85,7 +79,6 @@ export default function AssistantChat({
   variant = "inline",
   title = "AI Habit Coach",
   subtitle = "Hoi ve app, xin loi khuyen, hoac check-in thoi quen bang chat.",
-  quickPrompts = defaultQuickPrompts,
 }) {
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
@@ -237,23 +230,6 @@ export default function AssistantChat({
     [bubblePosition, clampBubbleX, clampBubbleY],
   );
 
-  const renderPromptChip = (prompt) => (
-    <Pressable
-      key={prompt}
-      disabled={isSending}
-      onPress={() => void sendMessage(prompt)}
-      style={({ pressed }) => [
-        styles.promptChip,
-        isSending && styles.promptChipDisabled,
-        pressed && styles.promptChipPressed,
-      ]}
-    >
-      <Text color="primary" variant="caption">
-        {prompt}
-      </Text>
-    </Pressable>
-  );
-
   const trigger =
     variant === "floating" ? (
       <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
@@ -286,9 +262,6 @@ export default function AssistantChat({
             </Text>
           </View>
         </View>
-
-        <View style={styles.promptRow}>{quickPrompts.map(renderPromptChip)}</View>
-
         <Pressable
           onPress={openChat}
           style={({ pressed }) => [
@@ -355,9 +328,6 @@ export default function AssistantChat({
                 </View>
               ))}
             </ScrollView>
-
-            <View style={styles.promptRow}>{quickPrompts.map(renderPromptChip)}</View>
-
             <View style={styles.inputRow}>
               <TextInput
                 editable={!isSending}
@@ -502,23 +472,6 @@ const styles = StyleSheet.create({
   },
   messageText: {
     lineHeight: 20,
-  },
-  promptRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  promptChip: {
-    backgroundColor: colors.primarySoft,
-    borderRadius: radii.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  promptChipPressed: {
-    opacity: 0.85,
-  },
-  promptChipDisabled: {
-    opacity: 0.5,
   },
   inputRow: {
     flexDirection: "row",

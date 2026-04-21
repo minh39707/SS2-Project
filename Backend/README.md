@@ -23,9 +23,9 @@ npm install
 
 ```env
 PORT=4000
-SUPABASE_URL=https://kadvjcymfgtevqmjkvjv.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImthZHZqY3ltZmd0ZXZxbWprdmp2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDIwNTA0MywiZXhwIjoyMDg5NzgxMDQzfQ.H6JvlHmO0YL4XDTRH_f--ZGv8Mf_BzkXiT9MSRgba4w
-GEMINI_API_KEY=AIzaSyC-VHWfAyxtU-LnehGbnmb8epdxx74WR48
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-2.5-flash
 GEMINI_CHAT_MODEL=gemini-2.5-flash
 GEMINI_TASK_MODEL=gemini-2.5-flash
@@ -95,3 +95,14 @@ The frontend has its own separate env files:
 - `Frontend/.env.local`
 
 Those are documented in [Frontend/README.md](../Frontend/README.md).
+
+## Database Reconciliation
+
+If your Supabase database was created from an older schema snapshot, compare it with the current backend expectations before running the app.
+
+Useful files:
+
+- [migrations/20260410_update_habit_log_statuses.sql](./migrations/20260410_update_habit_log_statuses.sql)
+- [migrations/20260419_add_gold_change_to_habit_logs.sql](./migrations/20260419_add_gold_change_to_habit_logs.sql)
+- [sql_editor_reconcile_backend.sql](./sql_editor_reconcile_backend.sql)
+- [DB_RECONCILIATION.md](./DB_RECONCILIATION.md)

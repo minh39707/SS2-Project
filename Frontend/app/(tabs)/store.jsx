@@ -2,31 +2,32 @@ import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Image,
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
   View,
 } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
+import Card from "@/src/components/ui/Card";
+import ProfileAvatar from "@/src/components/ui/ProfileAvatar";
 import { Text } from "@/src/components/ui/Text";
+import { colors } from "@/src/constants/colors";
 import { radii, shadows, spacing } from "@/src/constants/theme";
 import { getDashboardData } from "@/src/services/habit.service";
+import { getStoreInventory, getStoreItems } from "@/src/services/store.service";
 import { getCurrentUser } from "@/src/services/user.service";
-
-const heroAvatar =
-  "https://images.unsplash.com/photo-1511367461989-f85a21fda167?auto=format&fit=crop&w=400&q=80";
 
 const SHOP_SECTIONS = [
   {
     id: "tier-1",
-    title: "Cấp 1",
+    title: "Tier 1",
     accent: "#18B981",
     items: [
       {
         id: "hp-small",
-        name: "Hồi phục nhỏ",
-        description: "Hồi một ít máu",
+        name: "Small Heal",
+        description: "Restore a small amount of HP.",
         effect: "+10 HP",
         price: 10,
         icon: "heart-outline",
@@ -35,351 +36,13 @@ const SHOP_SECTIONS = [
       },
       {
         id: "exp-2x",
-        name: "Tăng kinh nghiệm x2",
-        description: "Nhân đôi kinh nghiệm",
-        effect: "Buff",
+        name: "Double XP",
+        description: "Double your XP reward once.",
+        effect: "Boost",
         price: 20,
         icon: "star-outline",
         iconColor: "#0F9F6E",
         iconBg: "#D1FAE5",
-      },
-      {
-        id: "streak-guard",
-        name: "Giữ chuỗi",
-        description: "Bảo vệ chuỗi 1 ngày",
-        effect: "Bảo vệ",
-        price: 25,
-        icon: "shield-outline",
-        iconColor: "#059669",
-        iconBg: "#D1FAE5",
-      },
-      {
-        id: "focus-reminder",
-        name: "Nhắc nhở tăng cường",
-        description: "Thông báo nổi bật",
-        effect: "Tiện ích",
-        price: 15,
-        icon: "notifications-outline",
-        iconColor: "#10B981",
-        iconBg: "#D1FAE5",
-      },
-      {
-        id: "quest-exp",
-        name: "Phần thưởng nhiệm vụ x2",
-        description: "Nhân đôi thưởng nhiệm vụ",
-        effect: "Buff",
-        price: 30,
-        icon: "calendar-outline",
-        iconColor: "#059669",
-        iconBg: "#D1FAE5",
-      },
-      {
-        id: "skip-quest",
-        name: "Bỏ qua nhiệm vụ",
-        description: "Bỏ qua 1 nhiệm vụ",
-        effect: "Đặc biệt",
-        price: 35,
-        icon: "play-forward-outline",
-        iconColor: "#10B981",
-        iconBg: "#D1FAE5",
-      },
-      {
-        id: "small-bag",
-        name: "Rương thưởng nhỏ",
-        description: "Mở ra phần thưởng nhỏ",
-        effect: "Dachu",
-        price: 20,
-        icon: "file-tray-outline",
-        iconColor: "#059669",
-        iconBg: "#D1FAE5",
-      },
-    ],
-  },
-  {
-    id: "tier-2",
-    title: "Cấp 2",
-    accent: "#3B82F6",
-    items: [
-      {
-        id: "hp-medium",
-        name: "Hồi phục trung",
-        description: "Hồi lượng máu vừa",
-        effect: "+20 HP",
-        price: 40,
-        icon: "heart-outline",
-        iconColor: "#2563EB",
-        iconBg: "#DBEAFE",
-      },
-      {
-        id: "shield-chain",
-        name: "Khiên chuỗi",
-        description: "Bảo vệ chuỗi",
-        effect: "Bảo vệ",
-        price: 60,
-        icon: "shield-half-outline",
-        iconColor: "#2563EB",
-        iconBg: "#DBEAFE",
-      },
-      {
-        id: "quest-exp-boost",
-        name: "Tăng EXP theo nhiệm vụ khó",
-        description: "Tăng thưởng EXP cho nhiệm vụ khó",
-        effect: "Buff",
-        price: 50,
-        icon: "trending-up-outline",
-        iconColor: "#2563EB",
-        iconBg: "#DBEAFE",
-      },
-      {
-        id: "reduce-difficulty",
-        name: "Giảm độ khó",
-        description: "Giảm độ yêu cầu nhiệm vụ",
-        effect: "Hỗ trợ",
-        price: 55,
-        icon: "arrow-down-outline",
-        iconColor: "#2563EB",
-        iconBg: "#DBEAFE",
-      },
-      {
-        id: "energy-up",
-        name: "Tăng năng lượng",
-        description: "Hồi phục thêm năng lượng",
-        effect: "Tích hợp",
-        price: 60,
-        icon: "flash-outline",
-        iconColor: "#2563EB",
-        iconBg: "#DBEAFE",
-      },
-      {
-        id: "medium-chest",
-        name: "Rương thưởng trung",
-        description: "Mở ra phần thưởng vừa",
-        effect: "Cách tân",
-        price: 45,
-        icon: "wallet-outline",
-        iconColor: "#2563EB",
-        iconBg: "#DBEAFE",
-      },
-      {
-        id: "instant-complete",
-        name: "Hoàn thành nhanh",
-        description: "Hoàn tất hoàn thành ngay",
-        effect: "Tiện ích",
-        price: 70,
-        icon: "checkmark-done-outline",
-        iconColor: "#2563EB",
-        iconBg: "#DBEAFE",
-      },
-    ],
-  },
-  {
-    id: "tier-3",
-    title: "Cấp 3",
-    accent: "#A855F7",
-    items: [
-      {
-        id: "hp-large",
-        name: "Hồi phục lớn",
-        description: "Hồi lượng máu lớn",
-        effect: "+40 HP",
-        price: 80,
-        icon: "heart-outline",
-        iconColor: "#9333EA",
-        iconBg: "#F3E8FF",
-      },
-      {
-        id: "streak-plus",
-        name: "Giữ chuỗi nâng cao",
-        description: "Bảo vệ chuỗi 2 ngày",
-        effect: "Bảo vệ",
-        price: 90,
-        icon: "shield-checkmark-outline",
-        iconColor: "#9333EA",
-        iconBg: "#F3E8FF",
-      },
-      {
-        id: "exp-3x-lite",
-        name: "Tăng EXP x2",
-        description: "Nhân đôi kinh nghiệm lâu hơn",
-        effect: "Buff",
-        price: 100,
-        icon: "star-outline",
-        iconColor: "#9333EA",
-        iconBg: "#F3E8FF",
-      },
-      {
-        id: "rewind",
-        name: "Quay lại chuỗi",
-        description: "Khôi phục chuỗi đã mất",
-        effect: "Hiếm",
-        price: 110,
-        icon: "refresh-outline",
-        iconColor: "#9333EA",
-        iconBg: "#F3E8FF",
-      },
-      {
-        id: "pet",
-        name: "Thú đồng hành sơ bản",
-        description: "Đồng hành mới",
-        effect: "Hiếm",
-        price: 95,
-        icon: "paw-outline",
-        iconColor: "#9333EA",
-        iconBg: "#F3E8FF",
-      },
-      {
-        id: "focus-mode",
-        name: "Chế độ tập trung",
-        description: "Kích hoạt chế độ tập trung cao",
-        effect: "Tiện ích",
-        price: 85,
-        icon: "scan-outline",
-        iconColor: "#9333EA",
-        iconBg: "#F3E8FF",
-      },
-      {
-        id: "large-chest",
-        name: "Rương thưởng lớn",
-        description: "Mở ra phần thưởng lớn",
-        effect: "Dachu",
-        price: 90,
-        icon: "briefcase-outline",
-        iconColor: "#9333EA",
-        iconBg: "#F3E8FF",
-      },
-    ],
-  },
-  {
-    id: "tier-4",
-    title: "Cấp 4 (Hiếm)",
-    accent: "#EF4444",
-    items: [
-      {
-        id: "full-heal",
-        name: "Hồi phục toàn phần",
-        description: "Hồi đầy máu",
-        effect: "+100 HP",
-        price: 130,
-        icon: "medkit-outline",
-        iconColor: "#EF4444",
-        iconBg: "#FEE2E2",
-      },
-      {
-        id: "exp-3x",
-        name: "Tăng EXP x3",
-        description: "Nhân ba kinh nghiệm",
-        effect: "Buff",
-        price: 140,
-        icon: "sparkles-outline",
-        iconColor: "#EF4444",
-        iconBg: "#FEE2E2",
-      },
-      {
-        id: "rare-chain",
-        name: "Nhẫn thưởng chuỗi",
-        description: "Tăng thưởng chuỗi",
-        effect: "Hiếm",
-        price: 150,
-        icon: "sunny-outline",
-        iconColor: "#EF4444",
-        iconBg: "#FEE2E2",
-      },
-      {
-        id: "challenge-ticket",
-        name: "Vé thử thách",
-        description: "Tham gia thử thách đặc biệt",
-        effect: "Sự kiện",
-        price: 120,
-        icon: "ticket-outline",
-        iconColor: "#EF4444",
-        iconBg: "#FEE2E2",
-      },
-      {
-        id: "premium-contract",
-        name: "Hợp đồng cam kết",
-        description: "Cam kết nhận thưởng lớn",
-        effect: "Đặc biệt",
-        price: 138,
-        icon: "diamond-outline",
-        iconColor: "#EF4444",
-        iconBg: "#FEE2E2",
-      },
-      {
-        id: "mystery-box",
-        name: "Hộp may rủi",
-        description: "Mở ra vật phẩm ngẫu nhiên",
-        effect: "Cách tân",
-        price: 125,
-        icon: "gift-outline",
-        iconColor: "#EF4444",
-        iconBg: "#FEE2E2",
-      },
-    ],
-  },
-  {
-    id: "tier-5",
-    title: "Cấp 5 (Cao cấp)",
-    accent: "#EAB308",
-    items: [
-      {
-        id: "exp-5x",
-        name: "Tăng EXP x5 (1 ngày)",
-        description: "Buff cực mạnh, rủi ro cao",
-        effect: "Huyền thoại",
-        price: 180,
-        icon: "rocket-outline",
-        iconColor: "#CA8A04",
-        iconBg: "#FEF3C7",
-      },
-      {
-        id: "instant-level",
-        name: "Lên cấp ngay",
-        description: "Tăng 1 level lập tức",
-        effect: "Cao cấp",
-        price: 200,
-        icon: "trending-up-outline",
-        iconColor: "#CA8A04",
-        iconBg: "#FEF3C7",
-      },
-      {
-        id: "super-streak-shield",
-        name: "Siêu khiên chuỗi",
-        description: "Bảo vệ streak 7 ngày",
-        effect: "Hiếm đặc biệt",
-        price: 170,
-        icon: "shield-checkmark-outline",
-        iconColor: "#CA8A04",
-        iconBg: "#FEF3C7",
-      },
-      {
-        id: "quest-reward-3x",
-        name: "Nhân 3 phần thưởng nhiệm vụ",
-        description: "Áp dụng cho 1 task",
-        effect: "Buff nhiệm vụ",
-        price: 160,
-        icon: "layers-outline",
-        iconColor: "#CA8A04",
-        iconBg: "#FEF3C7",
-      },
-      {
-        id: "premium-pet",
-        name: "Thú đồng hành cao cấp",
-        description: "Boost EXP + bonus đặc biệt",
-        effect: "Đồng hành",
-        price: 175,
-        icon: "paw-outline",
-        iconColor: "#CA8A04",
-        iconBg: "#FEF3C7",
-      },
-      {
-        id: "legendary-chest",
-        name: "Rương huyền thoại",
-        description: "Reward cực hiếm",
-        effect: "Huyền thoại",
-        price: 190,
-        icon: "diamond-outline",
-        iconColor: "#CA8A04",
-        iconBg: "#FEF3C7",
       },
     ],
   },
@@ -388,7 +51,7 @@ const SHOP_SECTIONS = [
 const INVENTORY_ITEMS = [
   {
     id: "inv-hp-small",
-    name: "Hồi phục nhỏ",
+    name: "Small Heal",
     icon: "heart",
     iconColor: "#16A34A",
     iconBg: "#DCFCE7",
@@ -397,48 +60,12 @@ const INVENTORY_ITEMS = [
   },
   {
     id: "inv-exp",
-    name: "x2 EXP (1 ngày)",
+    name: "Double XP",
     icon: "flash",
     iconColor: "#2563EB",
     iconBg: "#DBEAFE",
     quantity: 2,
     equipped: false,
-  },
-  {
-    id: "inv-streak",
-    name: "Giữ chuỗi",
-    icon: "flame",
-    iconColor: "#EA580C",
-    iconBg: "#FFEDD5",
-    quantity: 3,
-    equipped: false,
-  },
-  {
-    id: "inv-shield",
-    name: "Khiên chuỗi",
-    icon: "shield",
-    iconColor: "#9333EA",
-    iconBg: "#F3E8FF",
-    quantity: 1,
-    equipped: false,
-  },
-  {
-    id: "inv-bag",
-    name: "Rương nhỏ",
-    icon: "briefcase",
-    iconColor: "#CA8A04",
-    iconBg: "#FEF9C3",
-    quantity: 4,
-    equipped: false,
-  },
-  {
-    id: "inv-pet",
-    name: "Thú đồng hành",
-    icon: "paw",
-    iconColor: "#DB2777",
-    iconBg: "#FCE7F3",
-    quantity: 1,
-    equipped: true,
   },
 ];
 
@@ -476,7 +103,7 @@ function ShopItemRow({ item }) {
         <Text numberOfLines={1} style={styles.shopItemTitle} variant="body">
           {item.name}
         </Text>
-        <Text numberOfLines={1} color="muted" style={styles.shopItemDescription} variant="caption">
+        <Text numberOfLines={2} color="muted" style={styles.shopItemDescription} variant="caption">
           {item.description}
         </Text>
         <Text style={[styles.shopItemEffect, { color: item.iconColor }]} variant="caption">
@@ -502,7 +129,7 @@ function InventoryCard({ item }) {
       {item.equipped ? (
         <View style={styles.equippedBanner}>
           <Text style={styles.equippedBannerText} variant="caption">
-            DANG TRANG BG
+            EQUIPPED
           </Text>
         </View>
       ) : null}
@@ -534,7 +161,7 @@ function InventoryCard({ item }) {
           ]}
           variant="body"
         >
-          {item.equipped ? "Tháo" : "Dùng"}
+          {item.equipped ? "Unequip" : "Use"}
         </Text>
       </Pressable>
     </View>
@@ -546,7 +173,9 @@ export default function StoreScreen() {
   const [activeTab, setActiveTab] = useState("shop");
   const [profile, setProfile] = useState(null);
   const [dashboardData, setDashboardData] = useState(null);
-  const inventoryItems = useMemo(() => INVENTORY_ITEMS.slice(0, 0), []);
+  const [shopSections, setShopSections] = useState(SHOP_SECTIONS);
+  const [inventoryItems, setInventoryItems] = useState([]);
+  const [loadingStore, setLoadingStore] = useState(true);
 
   useEffect(() => {
     if (!isFocused) {
@@ -556,10 +185,14 @@ export default function StoreScreen() {
     let isActive = true;
 
     const hydrate = async () => {
+      setLoadingStore(true);
+
       try {
-        const [userProfile, dashboard] = await Promise.all([
+        const [userProfile, dashboard, storeResponse, inventoryResponse] = await Promise.all([
           getCurrentUser({ forceRefresh: true }),
           getDashboardData({ forceRefresh: true }),
+          getStoreItems(),
+          getStoreInventory(),
         ]);
 
         if (!isActive) {
@@ -568,9 +201,23 @@ export default function StoreScreen() {
 
         setProfile(userProfile);
         setDashboardData(dashboard ?? null);
+        setShopSections(
+          Array.isArray(storeResponse?.sections) && storeResponse.sections.length > 0
+            ? storeResponse.sections
+            : SHOP_SECTIONS,
+        );
+        setInventoryItems(
+          Array.isArray(inventoryResponse?.items) && inventoryResponse.items.length > 0
+            ? inventoryResponse.items
+            : INVENTORY_ITEMS,
+        );
       } catch (error) {
         if (__DEV__) {
           console.warn("Failed to load store profile", error);
+        }
+      } finally {
+        if (isActive) {
+          setLoadingStore(false);
         }
       }
     };
@@ -584,12 +231,15 @@ export default function StoreScreen() {
 
   const stats = dashboardData?.stats ?? [];
   const player = dashboardData?.player ?? null;
-  const hp = useMemo(() => buildStatValue(stats, "HP", 100, 100), [stats]);
-  const exp = useMemo(() => buildStatValue(stats, "EXP", 100, 100), [stats]);
-  const streak = useMemo(() => buildStatValue(stats, "Streaks", 0, 7), [stats]);
-  const heroName = profile?.name ?? "Hero Name";
+  const hp = buildStatValue(stats, "HP", player?.currentHp ?? 100, player?.maxHp ?? 100);
+  const exp = buildStatValue(stats, "EXP", player?.currentExp ?? 0, player?.expToNextLevel ?? 100);
+  const streak = buildStatValue(stats, "Streaks", 0, 7);
+  const heroName = profile?.name ?? "Habit Hero";
   const coinBalance = player?.goldCoins ?? profile?.goldCoins ?? 0;
   const level = player?.level ?? profile?.level ?? 1;
+  const providerLabel = "Google sync";
+  const hpProgress = hp.max > 0 ? Math.max(0, Math.min(1, hp.value / hp.max)) : 0;
+  const expProgress = exp.max > 0 ? Math.max(0, Math.min(1, exp.value / exp.max)) : 0;
   const inventoryRows = useMemo(() => chunkItems(inventoryItems, 2), [inventoryItems]);
 
   return (
@@ -601,81 +251,106 @@ export default function StoreScreen() {
       >
         <Animated.View entering={FadeInDown.duration(420)} style={styles.headerRow}>
           <Text style={styles.headerTitle} variant="title">
-            Cửa hàng
+            Store
           </Text>
         </Animated.View>
 
-        <Animated.View entering={FadeInDown.duration(470).delay(60)} style={styles.heroCard}>
-          <View style={styles.heroHeader}>
-            <View style={styles.avatarWrap}>
-              <Image source={{ uri: profile?.avatarUrl ?? heroAvatar }} style={styles.heroAvatar} />
-              <View style={styles.levelPill}>
-                <Text style={styles.levelPillText} variant="caption">
-                  LV {level}
-                </Text>
+        <Animated.View entering={FadeInDown.duration(470).delay(60)}>
+          <Card style={styles.playerCard}>
+            <View style={styles.playerTop}>
+              <View style={styles.avatarWrap}>
+                <ProfileAvatar
+                  avatarUrl={profile?.avatarUrl ?? null}
+                  name={heroName}
+                  seed={profile?.id ?? heroName}
+                  size={60}
+                  style={styles.avatarCircle}
+                  textStyle={styles.avatarText}
+                />
+                <View style={styles.levelPill}>
+                  <Text color="primary" style={styles.levelPillText} variant="caption">
+                    LV {level}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.playerInfo}>
+                <View style={styles.playerHeader}>
+                  <View style={styles.playerHeaderCopy}>
+                    <Text style={styles.playerName} variant="subtitle">
+                      {heroName}
+                    </Text>
+                    <Text color="muted" variant="caption">
+                      {providerLabel}
+                    </Text>
+                  </View>
+
+                  <View style={styles.streakBadge}>
+                    <Text style={styles.streakText} variant="label">
+                      {streak.value}
+                    </Text>
+                    <Ionicons color="#F59E0B" name="flame" size={14} />
+                  </View>
+
+                  <View style={styles.goldBadge}>
+                    <View style={styles.goldIconCircle}>
+                      <Ionicons color="#FFFFFF" name="logo-usd" size={16} />
+                    </View>
+                    <Text style={styles.goldText} variant="label">
+                      {formatCoins(coinBalance)}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.statGroup}>
+                  <View style={styles.statLabelRow}>
+                    <Text style={styles.statLabel} variant="caption">
+                      HP
+                    </Text>
+                    <Text style={styles.statValue} variant="caption">
+                      {hp.value}/{hp.max}
+                    </Text>
+                  </View>
+                  <View style={styles.statTrack}>
+                    <View
+                      style={[
+                        styles.statFill,
+                        styles.hpFill,
+                        { width: `${Math.max(8, hpProgress * 100)}%` },
+                      ]}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.statGroup}>
+                  <View style={styles.statLabelRow}>
+                    <Text style={styles.statLabel} variant="caption">
+                      EXP
+                    </Text>
+                    <Text style={styles.statValue} variant="caption">
+                      {exp.value}/{exp.max}
+                    </Text>
+                  </View>
+                  <View style={styles.statTrack}>
+                    <View
+                      style={[
+                        styles.statFill,
+                        styles.expFill,
+                        { width: `${Math.max(8, expProgress * 100)}%` },
+                      ]}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.playerHint}>
+                  <Ionicons color={colors.primary} name="flash-outline" size={14} />
+                  <Text color="muted" style={styles.playerHintText} variant="caption">
+                    Complete habits to gain EXP. Missing core habits may cost HP.
+                  </Text>
+                </View>
               </View>
             </View>
-
-            <View style={styles.heroMeta}>
-              <View style={styles.heroHeaderTop}>
-                <View style={styles.heroTitleBlock}>
-                  <Text style={styles.heroName} variant="subtitle">
-                    {heroName}
-                  </Text>
-                  <Text color="muted" style={styles.heroSubtitle} variant="caption">
-                    Google sync
-                  </Text>
-                </View>
-
-                <View style={styles.streakBadge}>
-                  <Ionicons color="#F59E0B" name="flame" size={14} />
-                  <Text style={styles.streakText} variant="caption">
-                    {streak.value}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.statRow}>
-                <View style={styles.statLabels}>
-                  <Text style={styles.hpLabel} variant="label">
-                    HP
-                  </Text>
-                  <Text style={styles.hpValue} variant="label">
-                    {hp.value}/{hp.max}
-                  </Text>
-                </View>
-                <View style={styles.statTrack}>
-                  <View
-                    style={[
-                      styles.statFill,
-                      styles.hpFill,
-                      { width: `${Math.max(8, Math.min(100, (hp.value / hp.max) * 100))}%` },
-                    ]}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.statRow}>
-                <View style={styles.statLabels}>
-                  <Text style={styles.expLabel} variant="label">
-                    EXP
-                  </Text>
-                  <Text style={styles.expValue} variant="label">
-                    {exp.value}/{exp.max}
-                  </Text>
-                </View>
-                <View style={styles.statTrack}>
-                  <View
-                    style={[
-                      styles.statFill,
-                      styles.expFill,
-                      { width: `${Math.max(8, Math.min(100, (exp.value / exp.max) * 100))}%` },
-                    ]}
-                  />
-                </View>
-              </View>
-            </View>
-          </View>
+          </Card>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.duration(520).delay(100)} style={styles.controlRow}>
@@ -694,7 +369,7 @@ export default function StoreScreen() {
                 ]}
                 variant="subtitle"
               >
-                Cửa hàng
+                Shop
               </Text>
             </Pressable>
 
@@ -712,24 +387,15 @@ export default function StoreScreen() {
                 ]}
                 variant="subtitle"
               >
-                Túi đồ
+                Inventory
               </Text>
             </Pressable>
-          </View>
-
-          <View style={styles.coinBadge}>
-            <View style={styles.coinIconCircle}>
-              <Ionicons color="#FFFFFF" name="logo-usd" size={18} />
-            </View>
-            <Text style={styles.coinBadgeText} variant="subtitle">
-              {formatCoins(coinBalance)}
-            </Text>
           </View>
         </Animated.View>
 
         {activeTab === "shop" ? (
           <Animated.View entering={FadeInDown.duration(560).delay(140)} style={styles.sectionsWrap}>
-            {SHOP_SECTIONS.map((section) => (
+            {shopSections.map((section) => (
               <View key={section.id} style={styles.sectionBlock}>
                 <View style={styles.sectionHeader}>
                   <View style={[styles.sectionAccent, { backgroundColor: section.accent }]} />
@@ -738,7 +404,14 @@ export default function StoreScreen() {
                   </Text>
                 </View>
 
-                {section.items.length > 0 ? (
+                {loadingStore ? (
+                  <View style={styles.inventoryEmptyCard}>
+                    <ActivityIndicator color={colors.primary} />
+                    <Text style={styles.inventoryEmptyText} variant="body">
+                      Loading store...
+                    </Text>
+                  </View>
+                ) : section.items.length > 0 ? (
                   <View style={styles.shopList}>
                     {section.items.map((item) => (
                       <ShopItemRow item={item} key={item.id} />
@@ -755,11 +428,18 @@ export default function StoreScreen() {
             <View style={styles.sectionHeader}>
               <View style={[styles.sectionAccent, { backgroundColor: "#2563EB" }]} />
               <Text style={styles.sectionTitle} variant="subtitle">
-                Túi đồ
+                Inventory
               </Text>
             </View>
 
-            {inventoryItems.length > 0 ? (
+            {loadingStore ? (
+              <View style={styles.inventoryEmptyCard}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={styles.inventoryEmptyText} variant="body">
+                  Loading inventory...
+                </Text>
+              </View>
+            ) : inventoryItems.length > 0 ? (
               <View style={styles.inventoryGrid}>
                 {inventoryRows.map((row, rowIndex) => (
                   <View key={`inventory-row-${rowIndex}`} style={styles.inventoryRow}>
@@ -775,7 +455,7 @@ export default function StoreScreen() {
               <View style={styles.inventoryEmptyCard}>
                 <Ionicons color="#94A3B8" name="cube-outline" size={22} />
                 <Text style={styles.inventoryEmptyText} variant="body">
-                  Túi đồ hiện đang trống.
+                  Your inventory is empty.
                 </Text>
               </View>
             )}
@@ -789,7 +469,7 @@ export default function StoreScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.background,
   },
   scrollContent: {
     paddingHorizontal: spacing.md,
@@ -801,37 +481,39 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingBottom: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: "#EEF2FF",
+    borderBottomColor: colors.border,
   },
   headerTitle: {
-    color: "#3457B2",
+    color: colors.text,
     fontSize: 22,
     lineHeight: 28,
   },
-  heroCard: {
+  playerCard: {
+    padding: spacing.md,
+    gap: spacing.md,
     backgroundColor: "#EEF5FF",
     borderWidth: 1,
     borderColor: "#D7E5FB",
     borderRadius: 24,
-    padding: spacing.md,
-    ...shadows.card,
   },
-  heroHeader: {
+  playerTop: {
     flexDirection: "row",
-    gap: spacing.md,
-    alignItems: "flex-start",
+    gap: spacing.sm,
+    alignItems: "center",
   },
   avatarWrap: {
     alignItems: "center",
     gap: spacing.xs,
   },
-  heroAvatar: {
+  avatarCircle: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    borderWidth: 2,
-    borderColor: "#FFFFFF",
     backgroundColor: "#D9E8FF",
+  },
+  avatarText: {
+    color: colors.primary,
+    fontSize: 22,
   },
   levelPill: {
     paddingHorizontal: 8,
@@ -840,30 +522,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
   },
   levelPillText: {
-    color: "#3457B2",
     fontWeight: "700",
   },
-  heroMeta: {
+  playerInfo: {
     flex: 1,
     gap: 8,
   },
-  heroHeaderTop: {
+  playerHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     gap: spacing.sm,
     alignItems: "center",
   },
-  heroTitleBlock: {
+  playerHeaderCopy: {
     flex: 1,
     gap: 2,
   },
-  heroName: {
+  playerName: {
     fontSize: 18,
     lineHeight: 22,
-    color: "#0F172A",
-  },
-  heroSubtitle: {
-    lineHeight: 16,
   },
   streakBadge: {
     flexDirection: "row",
@@ -878,8 +555,37 @@ const styles = StyleSheet.create({
     color: "#8A5400",
     fontWeight: "700",
   },
-  statRow: {
+  goldBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#FFF9E8",
+    borderRadius: radii.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1.25,
+    borderColor: "#F8DD7D",
+  },
+  goldIconCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFC323",
+  },
+  goldText: {
+    color: "#D97706",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  statGroup: {
     gap: 3,
+  },
+  statLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: spacing.sm,
   },
   statTrack: {
     height: 8,
@@ -892,34 +598,17 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   hpFill: {
-    backgroundColor: "#FF4D5E",
+    backgroundColor: "#EF5B64",
   },
   expFill: {
-    backgroundColor: "#1877D9",
+    backgroundColor: "#467EE8",
   },
-  statLabels: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  hpLabel: {
+  statLabel: {
     color: "#475569",
-    fontSize: 13,
     fontWeight: "700",
   },
-  hpValue: {
+  statValue: {
     color: "#0F172A",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  expLabel: {
-    color: "#475569",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  expValue: {
-    color: "#0F172A",
-    fontSize: 13,
     fontWeight: "700",
   },
   controlRow: {
@@ -928,10 +617,12 @@ const styles = StyleSheet.create({
   },
   segmentedControl: {
     flexDirection: "row",
-    backgroundColor: "#C9D6FF",
+    backgroundColor: colors.surfaceMuted,
     borderRadius: radii.pill,
     padding: 6,
-    width: 180,
+    width: 220,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   segmentButton: {
     flex: 1,
@@ -941,39 +632,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   segmentButtonActive: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
     ...shadows.soft,
   },
   segmentText: {
-    color: "#1665B7",
+    color: colors.textMuted,
     fontSize: 17,
   },
   segmentTextActive: {
-    color: "#0A67BA",
+    color: colors.primary,
   },
-  coinBadge: {
+  playerHint: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    alignSelf: "flex-end",
-    backgroundColor: "#FFF9E8",
-    borderRadius: radii.pill,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderWidth: 1.5,
-    borderColor: "#F8DD7D",
+    alignItems: "flex-start",
+    gap: spacing.xs,
   },
-  coinIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#FFC323",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  coinBadgeText: {
-    color: "#F2B705",
-    fontSize: 18,
+  playerHintText: {
+    flex: 1,
+    lineHeight: 17,
   },
   sectionsWrap: {
     gap: spacing.lg,
@@ -992,7 +668,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   sectionTitle: {
-    color: "#0F172A",
+    color: colors.text,
     fontSize: 22,
   },
   shopList: {
@@ -1000,11 +676,14 @@ const styles = StyleSheet.create({
   },
   shopItem: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 12,
-    backgroundColor: "#EEF1F6",
+    backgroundColor: colors.surface,
     paddingHorizontal: 10,
     paddingVertical: 12,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   shopItemIcon: {
     width: 44,
@@ -1015,22 +694,25 @@ const styles = StyleSheet.create({
   shopItemBody: {
     flex: 1,
     gap: 2,
+    minWidth: 0,
   },
   shopItemTitle: {
-    color: "#101828",
+    color: colors.text,
     fontWeight: "700",
   },
   shopItemDescription: {
-    color: "#4B5563",
+    color: colors.textMuted,
+    lineHeight: 18,
   },
   shopItemEffect: {
     fontWeight: "700",
   },
   priceChip: {
-    minWidth: 74,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: "#1F5FBF",
+    minWidth: 68,
+    marginTop: 4,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    backgroundColor: colors.primary,
     borderRadius: radii.pill,
     flexDirection: "row",
     alignItems: "center",
@@ -1039,9 +721,9 @@ const styles = StyleSheet.create({
     ...shadows.soft,
   },
   priceCoinCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: "#FFF4B8",
     alignItems: "center",
     justifyContent: "center",
@@ -1049,10 +731,12 @@ const styles = StyleSheet.create({
   priceChipText: {
     color: "#FFE066",
     fontWeight: "800",
+    fontSize: 12,
   },
   emptyTierCard: {
     height: 16,
-    backgroundColor: "#EEF1F6",
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radii.md,
   },
   inventorySection: {
     gap: spacing.md,
@@ -1067,31 +751,34 @@ const styles = StyleSheet.create({
   inventoryCard: {
     flex: 1,
     minHeight: 280,
-    backgroundColor: "#E7EDFF",
+    backgroundColor: colors.surface,
     paddingHorizontal: 14,
     paddingVertical: 16,
     alignItems: "center",
     gap: 14,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.xl,
   },
   inventoryCardPlaceholder: {
     flex: 1,
   },
   inventoryCardEquipped: {
     borderWidth: 1.5,
-    borderColor: "#BFD2F7",
+    borderColor: colors.primary,
   },
   equippedBanner: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#D7E4FF",
+    backgroundColor: colors.primarySoft,
     paddingVertical: 8,
     alignItems: "center",
   },
   equippedBannerText: {
-    color: "#0A67BA",
+    color: colors.primary,
     fontWeight: "800",
     letterSpacing: 0.6,
   },
@@ -1103,11 +790,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: radii.pill,
-    backgroundColor: "#CFE0FF",
+    backgroundColor: colors.primarySoft,
     alignItems: "center",
   },
   inventoryCountBadgeText: {
-    color: "#2563EB",
+    color: colors.primary,
     fontWeight: "800",
   },
   inventoryIconWrap: {
@@ -1119,7 +806,7 @@ const styles = StyleSheet.create({
   },
   inventoryName: {
     textAlign: "center",
-    color: "#243B67",
+    color: colors.text,
     minHeight: 58,
     paddingHorizontal: 6,
   },
@@ -1130,11 +817,11 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#2B6FC3",
+    backgroundColor: colors.primary,
     ...shadows.card,
   },
   inventoryButtonEquipped: {
-    backgroundColor: "#C9D8FF",
+    backgroundColor: colors.primarySoft,
     shadowOpacity: 0,
     elevation: 0,
   },
@@ -1144,17 +831,19 @@ const styles = StyleSheet.create({
     fontSize: 17,
   },
   inventoryButtonTextEquipped: {
-    color: "#D62839",
+    color: colors.primary,
   },
   inventoryEmptyCard: {
     minHeight: 120,
     borderRadius: 20,
-    backgroundColor: "#EEF2FF",
+    backgroundColor: colors.surfaceMuted,
     alignItems: "center",
     justifyContent: "center",
     gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   inventoryEmptyText: {
-    color: "#64748B",
+    color: colors.textMuted,
   },
 });

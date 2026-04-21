@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, StyleSheet, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import ScreenContainer from "@/src/components/ScreenContainer";
@@ -67,6 +67,76 @@ function getActiveDays(frequency, specificDays) {
   }
 
   return new Set(orderedDays);
+}
+
+function getGoldPerTaskPreview(level = 1) {
+  return Math.min(10, 1 + Math.floor(Math.max(1, level) / 10));
+}
+
+function getDailyStreakGoldPreview(streak = 0) {
+  return Math.min(Math.max(0, streak), 50);
+}
+
+function buildCoinRewardPreview({
+  mission,
+  player,
+  dailySummary,
+}) {
+  if (!mission || isNegativeHabit(mission)) {
+    return {
+      guaranteedGold: 0,
+      estimatedGold: 0,
+      taskGold: 0,
+      streakGold: 0,
+      levelUpGold: 0,
+      dailyCompletionGold: 0,
+      isEligibleToday: false,
+      note: "Bad habits do not show a positive coin reward preview.",
+    };
+  }
+
+  if (!mission.isScheduledToday) {
+    return {
+      guaranteedGold: 0,
+      estimatedGold: 0,
+      taskGold: 0,
+      streakGold: 0,
+      levelUpGold: 0,
+      dailyCompletionGold: 0,
+      isEligibleToday: false,
+      note: "This habit is not scheduled for today, so it would not award coins right now.",
+    };
+  }
+
+  const level = player?.level ?? 1;
+  const currentExp = player?.currentExp ?? 0;
+  const expToNextLevel = Math.max(1, player?.expToNextLevel ?? 100);
+  const streak = player?.streak ?? 0;
+  const taskGold = getGoldPerTaskPreview(level);
+  const completedCount = Number(dailySummary?.completedCount ?? 0);
+  const totalCount = Number(dailySummary?.totalCount ?? 0);
+  const willCompleteToday = !mission.completedToday && totalCount > 0 && completedCount + 1 >= totalCount;
+  const streakGold = mission.completedToday || completedCount > 0 ? 0 : getDailyStreakGoldPreview(streak);
+  const projectedExp = currentExp + Number(mission.expReward ?? 0);
+  const levelUps = mission.completedToday ? 0 : Math.floor(projectedExp / expToNextLevel);
+  const levelUpGold = Math.max(0, levelUps) * 10;
+  const dailyCompletionGold = willCompleteToday ? 10 : 0;
+  const estimatedGold = mission.completedToday
+    ? taskGold
+    : taskGold + streakGold + levelUpGold + dailyCompletionGold;
+
+  return {
+    guaranteedGold: taskGold,
+    estimatedGold,
+    taskGold,
+    streakGold,
+    levelUpGold,
+    dailyCompletionGold,
+    isEligibleToday: true,
+    note: mission.completedToday
+      ? "This habit is already completed today. The exact coin reward may have depended on completion order."
+      : "Estimated with your current dashboard state. The final coin gain can change if another habit is completed first.",
+  };
 }
 
 function getDashboardFrequencyLabel(frequency, specificDays) {
@@ -260,6 +330,7 @@ export default function HomeScreen() {
   const [praiseMessage, setPraiseMessage] = useState(null);
   const [isGoodHabitsCollapsed, setIsGoodHabitsCollapsed] = useState(false);
   const [isBadHabitsCollapsed, setIsBadHabitsCollapsed] = useState(false);
+  const [selectedCoinMission, setSelectedCoinMission] = useState(null);
   const hasLoadedDashboardRef = useRef(false);
 
   useEffect(() => {
@@ -375,6 +446,7 @@ export default function HomeScreen() {
     player?.streak ??
     dashboardData?.stats?.find((item) => item.label === "Streaks")?.value ??
     0;
+  const goldCoins = player?.goldCoins ?? userProfile?.goldCoins ?? 0;
   const exp =
     player?.currentExp ??
     dashboardData?.stats?.find((item) => item.label === "EXP")?.value ??
@@ -409,6 +481,7 @@ export default function HomeScreen() {
           : authMethod === "email"
             ? "Email account"
             : "Guest mode";
+  const dailySummary = dashboardData?.dailySummary ?? null;
 
   let missionItems =
     dashboardData?.quickActions?.map((action) => {
@@ -483,6 +556,11 @@ export default function HomeScreen() {
   }
 
   const primaryMission = missionItems[0];
+  const primaryMissionCoinPreview = buildCoinRewardPreview({
+    mission: primaryMission,
+    player,
+    dailySummary,
+  });
 
   const refreshDashboard = async () => {
     const refreshedDashboard = await getDashboardData({ forceRefresh: true });
@@ -520,6 +598,22 @@ export default function HomeScreen() {
       setPraiseMessage(buildAllHabitsPraiseMessage(totalCount));
     }
   };
+
+  const openCoinRules = (mission) => {
+    setSelectedCoinMission(mission ?? null);
+  };
+
+  const closeCoinRules = () => {
+    setSelectedCoinMission(null);
+  };
+
+  const selectedCoinBreakdown = selectedCoinMission
+    ? buildCoinRewardPreview({
+        mission: selectedCoinMission,
+        player,
+        dailySummary,
+      })
+    : null;
 
   const handleSetNegativeHabitStatus = async (habit, status) => {
     if (!habit?.id || isUpdatingMission || updatingHabitId === habit.id) {
@@ -663,7 +757,14 @@ export default function HomeScreen() {
     }
   };
 
-  const renderHabitCard = (mission) => (
+  const renderHabitCard = (mission) => {
+    const coinPreview = buildCoinRewardPreview({
+      mission,
+      player,
+      dailySummary,
+    });
+
+    return (
     <View key={mission.id} style={styles.questPressable}>
       <Card style={[styles.questCard, isNegativeHabit(mission) && styles.questCardNegative]}>
         <View style={styles.questMainRow}>
@@ -697,19 +798,36 @@ export default function HomeScreen() {
           </Pressable>
 
             <View style={styles.questSide}>
-            <View
-              style={[
-                styles.questReward,
-                isNegativeHabit(mission) && styles.questRewardNegative,
-              ]}
-            >
-              <Text
-                color={isNegativeHabit(mission) ? undefined : "primary"}
-                style={isNegativeHabit(mission) ? styles.questRewardTextNegative : null}
-                variant="caption"
+            <View style={styles.questRewardRow}>
+              <View
+                style={[
+                  styles.questReward,
+                  isNegativeHabit(mission) && styles.questRewardNegative,
+                ]}
               >
-                {mission.reward}
-              </Text>
+                <Text
+                  color={isNegativeHabit(mission) ? undefined : "primary"}
+                  style={isNegativeHabit(mission) ? styles.questRewardTextNegative : null}
+                  variant="caption"
+                >
+                  {mission.reward}
+                </Text>
+              </View>
+
+              {!isNegativeHabit(mission) ? (
+                <Pressable
+                  onPress={() => openCoinRules(mission)}
+                  style={({ pressed }) => [
+                    styles.coinRewardChip,
+                    pressed && styles.coinRewardChipPressed,
+                  ]}
+                >
+                  <Ionicons color="#D97706" name="logo-usd" size={12} />
+                  <Text style={styles.coinRewardText} variant="caption">
+                    +{coinPreview.estimatedGold} COIN
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
 
             {isNegativeHabit(mission) ? (
@@ -826,6 +944,7 @@ export default function HomeScreen() {
       </Card>
     </View>
   );
+  };
 
   return (
     <ScreenContainer contentContainerStyle={styles.content}>
@@ -864,6 +983,15 @@ export default function HomeScreen() {
                     {streak}
                   </Text>
                   <Ionicons color="#F59E0B" name="flame" size={14} />
+                </View>
+
+                <View style={styles.goldBadge}>
+                  <View style={styles.goldIconCircle}>
+                    <Ionicons color="#FFFFFF" name="logo-usd" size={16} />
+                  </View>
+                  <Text style={styles.goldText} variant="label">
+                    {goldCoins}
+                  </Text>
                 </View>
               </View>
 
@@ -935,21 +1063,40 @@ export default function HomeScreen() {
           ) : (
             <>
               <View style={styles.todayMissionHeader}>
-                <View>
-              <Text color="primary" variant="label">
-                Today&apos;s Mission
-              </Text>
-              <Text style={styles.todayMissionTitle} variant="title">
-                {primaryMission?.title ?? "Create your first habit"}
-              </Text>
-            </View>
-            <View style={styles.rewardBadge}>
-              <Ionicons color={colors.warning} name="flash" size={14} />
-              <Text style={styles.rewardBadgeText} variant="caption">
-                {primaryMission?.reward ?? "+20 EXP"}
-              </Text>
-            </View>
-          </View>
+                <View style={styles.todayMissionHeaderCopy}>
+                  <Text color="primary" variant="label">
+                    Today&apos;s Mission
+                  </Text>
+                  <Text style={styles.todayMissionTitle} variant="title">
+                    {primaryMission?.title ?? "Create your first habit"}
+                  </Text>
+                </View>
+
+                <View style={styles.rewardBadgeRow}>
+                  <View style={styles.rewardBadge}>
+                    <Ionicons color={colors.warning} name="flash" size={14} />
+                    <Text style={styles.rewardBadgeText} variant="caption">
+                      {primaryMission?.reward ?? "+20 EXP"}
+                    </Text>
+                  </View>
+
+                  {!isNegativeHabit(primaryMission) ? (
+                    <Pressable
+                      onPress={() => openCoinRules(primaryMission)}
+                      style={({ pressed }) => [
+                        styles.coinRewardChip,
+                        styles.rewardCoinChip,
+                        pressed && styles.coinRewardChipPressed,
+                      ]}
+                    >
+                      <Ionicons color="#D97706" name="logo-usd" size={12} />
+                      <Text style={styles.coinRewardText} variant="caption">
+                        +{primaryMissionCoinPreview.estimatedGold} COIN
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
 
           <Text color="muted" style={styles.todayMissionBody} variant="body">
             {hasAnyHabits
@@ -1303,6 +1450,85 @@ export default function HomeScreen() {
           onPress={() => router.push("/habit-manage")}
         />
       </View>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={closeCoinRules}
+        transparent
+        visible={!!selectedCoinMission}
+      >
+        <Pressable onPress={closeCoinRules} style={styles.modalBackdrop}>
+          <Pressable onPress={() => {}} style={styles.coinModalCard}>
+            <View style={styles.coinModalHeader}>
+              <View style={styles.coinModalTitleWrap}>
+                <Text variant="subtitle">Coin Reward Rule</Text>
+                <Text color="muted" variant="caption">
+                  {selectedCoinMission?.title ?? "Habit"}
+                </Text>
+              </View>
+
+              <Pressable onPress={closeCoinRules} style={styles.coinModalClose}>
+                <Ionicons color={colors.textMuted} name="close" size={18} />
+              </Pressable>
+            </View>
+
+            {selectedCoinBreakdown ? (
+              <>
+                <View style={styles.coinModalSummary}>
+                  <Text color="muted" variant="caption">
+                    Estimated if you complete this habit next
+                  </Text>
+                  <Text style={styles.coinModalSummaryValue} variant="title">
+                    +{selectedCoinBreakdown.estimatedGold} coin
+                  </Text>
+                </View>
+
+                <View style={styles.coinRuleList}>
+                  <View style={styles.coinRuleRow}>
+                    <Text color="muted" variant="body">
+                      Base task reward
+                    </Text>
+                    <Text style={styles.coinRuleValue} variant="body">
+                      +{selectedCoinBreakdown.taskGold}
+                    </Text>
+                  </View>
+
+                  <View style={styles.coinRuleRow}>
+                    <Text color="muted" variant="body">
+                      Daily streak bonus
+                    </Text>
+                    <Text style={styles.coinRuleValue} variant="body">
+                      +{selectedCoinBreakdown.streakGold}
+                    </Text>
+                  </View>
+
+                  <View style={styles.coinRuleRow}>
+                    <Text color="muted" variant="body">
+                      Level up bonus
+                    </Text>
+                    <Text style={styles.coinRuleValue} variant="body">
+                      +{selectedCoinBreakdown.levelUpGold}
+                    </Text>
+                  </View>
+
+                  <View style={styles.coinRuleRow}>
+                    <Text color="muted" variant="body">
+                      Finish all habits today
+                    </Text>
+                    <Text style={styles.coinRuleValue} variant="body">
+                      +{selectedCoinBreakdown.dailyCompletionGold}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text color="muted" style={styles.coinModalFootnote} variant="caption">
+                  {selectedCoinBreakdown.note}
+                </Text>
+              </>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScreenContainer>
   );
 }
@@ -1393,6 +1619,30 @@ const styles = StyleSheet.create({
     color: "#8A5400",
     fontWeight: "700",
   },
+  goldBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#FFF9E8",
+    borderRadius: radii.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1.25,
+    borderColor: "#F8DD7D",
+  },
+  goldIconCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFC323",
+  },
+  goldText: {
+    color: "#D97706",
+    fontWeight: "700",
+    fontSize: 13,
+  },
   statGroup: {
     gap: 3,
   },
@@ -1453,10 +1703,10 @@ const styles = StyleSheet.create({
     borderRadius: 28,
   },
   todayMissionHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
     gap: spacing.sm,
+  },
+  todayMissionHeaderCopy: {
+    gap: 2,
   },
   todayMissionTitle: {
     marginTop: 4,
@@ -1475,6 +1725,15 @@ const styles = StyleSheet.create({
   rewardBadgeText: {
     color: "#A16207",
     fontWeight: "700",
+  },
+  rewardBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  rewardCoinChip: {
+    minHeight: 34,
   },
   todayMissionBody: {
     lineHeight: 22,
@@ -1793,6 +2052,31 @@ const styles = StyleSheet.create({
     color: "#B45309",
     fontWeight: "700",
   },
+  questRewardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  coinRewardChip: {
+    minHeight: 30,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "#F8DD7D",
+    backgroundColor: "#FFF9E8",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  coinRewardChipPressed: {
+    opacity: 0.82,
+  },
+  coinRewardText: {
+    color: "#D97706",
+    fontWeight: "700",
+  },
   questActionButton: {
     minWidth: 96,
     minHeight: 36,
@@ -1834,6 +2118,68 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.45)",
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  coinModalCard: {
+    width: "100%",
+    maxWidth: 380,
+    borderRadius: 24,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#D7E5FB",
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  coinModalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  coinModalTitleWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  coinModalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F8FAFD",
+  },
+  coinModalSummary: {
+    padding: spacing.md,
+    borderRadius: 20,
+    backgroundColor: "#FFF9E8",
+    gap: 4,
+  },
+  coinModalSummaryValue: {
+    color: "#D97706",
+    fontSize: 26,
+    lineHeight: 32,
+  },
+  coinRuleList: {
+    gap: 10,
+  },
+  coinRuleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  coinRuleValue: {
+    color: "#0F172A",
+    fontWeight: "700",
+  },
+  coinModalFootnote: {
+    lineHeight: 18,
   },
   actions: {
     marginTop: spacing.sm,

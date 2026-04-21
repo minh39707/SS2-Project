@@ -308,15 +308,16 @@ function buildQuestSnapshot({ user, character, habits, analytics, activeQuestCou
 
 function buildCheckinExecutionReply(habit, actionType, isAlreadyLogged = false) {
   if (isAlreadyLogged) {
-    return `Habit "${habit.title}" da duoc ghi nhan cho hom nay roi.`;
+    return `Habit "${habit.title}" đã được ghi nhận cho hôm nay rồi.`;
   }
 
   if (actionType === 'partial') {
-    return `Minh da ghi nhan tien do cua "${habit.title}", nhung chua danh dau hoan thanh vi day moi la cap nhat mot phan.`;
+    return `Mình đã ghi nhận tiến độ của "${habit.title}", nhưng chưa đánh dấu hòan thành vì đây mới là cập nhật một phần.`;
   }
 
   if (actionType === 'avoid_success') {
-    return `Minh da ghi nhan "${habit.title}" la ban da tranh thanh cong hom nay.`;
+    return `Mình đã ghi nhận "${habit.title}" là bạn đã tránh thành công 
+    m nay.`;
   }
 
   if (actionType === 'failed') {
