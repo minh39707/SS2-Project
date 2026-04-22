@@ -28,6 +28,30 @@ const starterMessages = [
   },
 ];
 
+function normalizeMessageIntentText(value) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isSupportStyleMessage(value) {
+  const normalizedValue = normalizeMessageIntentText(value);
+
+  if (!normalizedValue) {
+    return false;
+  }
+
+  const supportPrefixes = ["xin chao", "chao", "hello", "hi", "hey"];
+  const providerMentions = ["qwen", "ollama", "gemma"];
+
+  return (
+    supportPrefixes.some((prefix) => normalizedValue.startsWith(prefix)) ||
+    providerMentions.some((provider) => normalizedValue.includes(provider))
+  );
+}
+
 const chatGptSegmentRotations = [
   "0deg",
   "60deg",
@@ -86,6 +110,7 @@ export default function AssistantChat({
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState(starterMessages);
   const [isSending, setIsSending] = useState(false);
+  const pendingCheckinClarificationRef = useRef(false);
   const chatHeight = Math.min(height * 0.58, 460);
   const bubbleWidth = 58;
   const bubbleHeight = 58;
@@ -147,12 +172,18 @@ export default function AssistantChat({
     setIsSending(true);
 
     try {
+      const shouldContinueCheckin =
+        pendingCheckinClarificationRef.current && !isSupportStyleMessage(content);
       const response = await sendAiChatMessage(content, {
         conversationId: "assistant-chat",
+        mode: shouldContinueCheckin ? "habit_checkin" : undefined,
       });
       const replyText = response.clarification_needed
         ? response.clarification_question ?? response.reply
         : response.reply;
+
+      pendingCheckinClarificationRef.current =
+        response.mode === "habit_checkin" && response.clarification_needed;
 
       setMessages((current) =>
         current.map((message) =>
@@ -166,6 +197,7 @@ export default function AssistantChat({
         ),
       );
     } catch {
+      pendingCheckinClarificationRef.current = false;
       setMessages((current) =>
         current.map((message) =>
           message.id === pendingMessageId

@@ -68,6 +68,9 @@ function buildHabitCheckinPrompt({ message, conversationId = null, habits = [] }
     '- only use habit_title values from the provided context',
     '- if multiple habits could match, ask a clarification question',
     '- if the user says something vague like "Mình hoàn thành rồi", ask which habit',
+    '- if the user message is only a habit title/name after a clarification, treat it as choosing that habit for check-in',
+    '- for a positive habit title/name selection, use action=complete',
+    '- for a negative habit title/name selection, ask whether they avoided it or failed today unless the message clearly says so',
     '- value should be numeric when the user explicitly gives a number, otherwise null',
     '- unit should be the user-provided unit when clear, otherwise null',
     'Return strict JSON with this shape:',
@@ -144,6 +147,37 @@ function buildInsightPrompt({ analyticsPayload, days }) {
   ].join('\n\n');
 }
 
+function buildAnalyticsReportPrompt({ analyticsPayload, period }) {
+  return [
+    'Task: write a concise Vietnamese analytics report for a habit tracker PDF.',
+    'Important rules:',
+    '- only use facts and numbers that exist in the supplied analytics payload',
+    '- do not fabricate statistics, dates, habit names, streaks, EXP, HP, or rates',
+    '- write practical recommendations tied to the supplied data',
+    '- keep each sentence short and suitable for a PDF report',
+    'Return strict JSON with this exact shape:',
+    JSON.stringify({
+      title: 'string',
+      subtitle: 'string',
+      executive_summary: 'string',
+      key_metrics: [
+        {
+          label: 'string',
+          value: 'string',
+          note: 'string',
+        },
+      ],
+      strengths: ['string'],
+      risks: ['string'],
+      recommendations: ['string'],
+      next_week_plan: ['string'],
+      closing_note: 'string',
+    }, null, 2),
+    `period: ${String(period ?? 'week')}`,
+    `analytics_payload: ${JSON.stringify(analyticsPayload, null, 2)}`,
+  ].join('\n\n');
+}
+
 module.exports = {
   CHAT_SYSTEM_PROMPT,
   HABIT_CHECKIN_SYSTEM_PROMPT,
@@ -151,4 +185,5 @@ module.exports = {
   buildHabitCheckinPrompt,
   buildQuestPrompt,
   buildInsightPrompt,
+  buildAnalyticsReportPrompt,
 };

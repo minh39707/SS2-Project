@@ -9,7 +9,7 @@ This backend currently handles:
 - habit creation and completion
 - streak / EXP / HP / level progression
 - analytics payloads
-- Gemini-powered AI chat, quest draft, and analytics insight routes
+- Ollama-powered local AI chat/check-in plus Gemini-powered analytics PDF reports
 
 ## Setup
 
@@ -25,10 +25,15 @@ npm install
 PORT=4000
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:8b
+OLLAMA_KEEP_ALIVE=10m
+OLLAMA_THINK=false
+LOCAL_AI_TIMEOUT_MS=180000
 GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_CHAT_MODEL=gemini-2.5-flash
-GEMINI_TASK_MODEL=gemini-2.5-flash
+GEMINI_REPORT_MODEL=gemini-2.0-flash
+GEMINI_REPORT_TIMEOUT_MS=60000
 ```
 
 ## Backend Env
@@ -38,16 +43,34 @@ GEMINI_TASK_MODEL=gemini-2.5-flash
 - `PORT`: local Express port, usually `4000`
 - `SUPABASE_URL`: Supabase project URL
 - `SUPABASE_SERVICE_ROLE_KEY`: backend admin key for database operations
-- `GEMINI_API_KEY`: backend-only key used for `/api/ai/chat`, `/api/ai/quest/generate`, and `/api/ai/insight`
-- `GEMINI_MODEL`: default Gemini model
-- `GEMINI_CHAT_MODEL`: optional override for chat
-- `GEMINI_TASK_MODEL`: optional override for quest generation and analytics insight
+- `AI_PROVIDER`: local AI provider; this backend uses `ollama`
+- `LOCAL_AI_TIMEOUT_MS`: optional Ollama timeout in milliseconds, default `60000`
+- `OLLAMA_BASE_URL`: Ollama base URL, default `http://localhost:11434`
+- `OLLAMA_MODEL`: Ollama model name, default `qwen3:8b`
+- `OLLAMA_CHAT_MODEL`: optional Ollama model override for chat
+- `OLLAMA_TASK_MODEL`: optional Ollama model override for quest generation and analytics insight
+- `OLLAMA_KEEP_ALIVE`: optional duration to keep the Ollama model loaded, default `10m`
+- `OLLAMA_THINK`: set `true` to enable thinking output for compatible Ollama models; default is disabled for JSON reliability
+- `GEMINI_API_KEY`: Gemini key used only for analytics PDF report generation
+- `GEMINI_REPORT_MODEL`: optional Gemini model for PDF report analysis, default `gemini-2.0-flash`
+- `GEMINI_REPORT_TIMEOUT_MS`: optional Gemini report timeout in milliseconds, default `45000`
 
 Notes:
 
 - keep all backend secrets only in `Backend/.env`
-- do not place Gemini secrets in frontend env files
-- Gemini free-tier access depends on your Google AI Studio account and current quota
+- run Ollama locally before using AI routes
+
+```env
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:8b
+OLLAMA_KEEP_ALIVE=10m
+OLLAMA_THINK=false
+LOCAL_AI_TIMEOUT_MS=180000
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_REPORT_MODEL=gemini-2.0-flash
+GEMINI_REPORT_TIMEOUT_MS=60000
+```
 
 ## Run Locally
 

@@ -5,14 +5,21 @@ const habitsRouter = require('./habits');
 const { buildUserAnalyticsPayload } = require('../utils/userAnalytics');
 const { callGemini } = require('../services/gemini');
 const {
+  callAiModel,
+  getAiProvider,
+  getDefaultModel,
+} = require('../services/aiProvider');
+const {
   CHAT_SYSTEM_PROMPT,
   HABIT_CHECKIN_SYSTEM_PROMPT,
   buildSupportChatPrompt,
   buildHabitCheckinPrompt,
   buildQuestPrompt,
   buildInsightPrompt,
+  buildAnalyticsReportPrompt,
 } = require('../utils/aiPrompts');
 const {
+  normalizeAnalyticsReport,
   normalizeChatResponse,
   normalizeInsightResponse,
   normalizeQuestDraft,
@@ -21,10 +28,6 @@ const { isNegativeHabit, isPositiveHabit } = require('../utils/habitStatus');
 const { toDateKey } = require('../utils/habitProgress');
 
 const router = express.Router();
-const DEFAULT_CHAT_MODEL =
-  process.env.GEMINI_CHAT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-const DEFAULT_TASK_MODEL =
-  process.env.GEMINI_TASK_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const habitsAiHelpers = habitsRouter.aiHelpers ?? {};
 
 function normalizeVietnamese(value) {
@@ -114,6 +117,30 @@ function classifyChatMode(message) {
   }
 
   return 'support_chat';
+}
+
+function isSupportStyleMessage(message) {
+  const normalizedMessage = normalizeVietnamese(message);
+
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  const supportPrefixes = ['xin chao', 'chao', 'hello', 'hi', 'hey'];
+  const providerMentions = ['qwen', 'ollama', 'gemma'];
+
+  return (
+    supportPrefixes.some((prefix) => normalizedMessage.startsWith(prefix)) ||
+    providerMentions.some((provider) => normalizedMessage.includes(provider))
+  );
+}
+
+function resolveChatMode(req, message) {
+  if (req.body?.mode === 'habit_checkin' && !isSupportStyleMessage(message)) {
+    return 'habit_checkin';
+  }
+
+  return classifyChatMode(message);
 }
 
 async function loadChatHabitContext(userId) {
@@ -306,6 +333,67 @@ function buildQuestSnapshot({ user, character, habits, analytics, activeQuestCou
   };
 }
 
+function buildAnalyticsReportSnapshot(analyticsPayload) {
+  const summary = analyticsPayload?.summary ?? {};
+
+  return {
+    profile: analyticsPayload?.profile
+      ? {
+          username: analyticsPayload.profile.username,
+          created_at: analyticsPayload.profile.created_at,
+        }
+      : null,
+    range: analyticsPayload?.range ?? null,
+    player: analyticsPayload?.player ?? null,
+    summary: {
+      scheduledCount: summary.scheduledCount ?? 0,
+      successCount: summary.successCount ?? 0,
+      completedCount: summary.completedCount ?? 0,
+      missedCount: summary.missedCount ?? 0,
+      avoidedCount: summary.avoidedCount ?? 0,
+      failedCount: summary.failedCount ?? 0,
+      totalExpGained: summary.totalExpGained ?? 0,
+      totalHpChange: summary.totalHpChange ?? 0,
+      completionRate: summary.completionRate ?? 0,
+      avoidanceRate: summary.avoidanceRate ?? 0,
+      activeDays: summary.activeDays ?? 0,
+      activeHabitCount: summary.activeHabitCount ?? 0,
+      activeGlobalStreak: summary.activeGlobalStreak ?? 0,
+      bestHabitStreak: summary.bestHabitStreak ?? 0,
+      goodHabits: summary.goodHabits ?? null,
+      badHabits: summary.badHabits ?? null,
+    },
+    topHabits: (analyticsPayload?.topHabits ?? []).slice(0, 8).map((habit) => ({
+      title: habit.title,
+      habitType: habit.habitType,
+      successCount: habit.successCount,
+      completedCount: habit.completedCount,
+      avoidedCount: habit.avoidedCount,
+      failedCount: habit.failedCount,
+      missedCount: habit.missedCount,
+      successRate: habit.successRate,
+      currentStreak: habit.currentStreak,
+    })),
+    weekdayBreakdown: (analyticsPayload?.weekdayBreakdown ?? []).map((day) => ({
+      label: day.label,
+      successCount: day.successCount,
+      completedCount: day.completedCount,
+      avoidedCount: day.avoidedCount,
+      failedCount: day.failedCount,
+    })),
+    categoryBreakdown: (analyticsPayload?.categoryBreakdown ?? []).slice(0, 8).map((category) => ({
+      label: category.label,
+      successCount: category.successCount,
+      percentage: category.percentage,
+    })),
+    streakHabits: (analyticsPayload?.streakHabits ?? []).slice(0, 8).map((habit) => ({
+      title: habit.title,
+      currentStreak: habit.currentStreak,
+      bestStreak: habit.bestStreak,
+    })),
+  };
+}
+
 function buildCheckinExecutionReply(habit, actionType, isAlreadyLogged = false) {
   if (isAlreadyLogged) {
     return `Habit "${habit.title}" đã được ghi nhận cho hôm nay rồi.`;
@@ -404,7 +492,7 @@ async function applyHabitCheckinAction(userId, habits, action) {
   };
 }
 
-function buildChatFallback(mode, model) {
+function buildChatFallback(mode, model, provider) {
   const fallback = normalizeChatResponse(
     mode === 'habit_checkin'
       ? {
@@ -428,7 +516,7 @@ function buildChatFallback(mode, model) {
 
   return {
     ...fallback,
-    meta: { model },
+    meta: { model, provider, fallback: true },
   };
 }
 
@@ -442,7 +530,8 @@ router.post('/chat', requireUser, async (req, res) => {
       return res.status(400).json({ message: 'message is required.' });
     }
 
-    const mode = classifyChatMode(message);
+    const mode = resolveChatMode(req, message);
+    const aiProvider = getAiProvider();
     const habits = mode === 'habit_checkin' ? await loadChatHabitContext(req.userId) : [];
     const availableHabitTitles = habits.map((habit) => habit.title).filter(Boolean);
     const prompt =
@@ -453,8 +542,8 @@ router.post('/chat', requireUser, async (req, res) => {
       mode === 'habit_checkin' ? HABIT_CHECKIN_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT;
 
     try {
-      const response = await callGemini({
-        model: DEFAULT_CHAT_MODEL,
+      const response = await callAiModel({
+        model: getDefaultModel('chat'),
         prompt,
         systemInstruction,
         temperature: mode === 'habit_checkin' ? 0.2 : 0.6,
@@ -486,13 +575,22 @@ router.post('/chat', requireUser, async (req, res) => {
         ...normalized,
         meta: {
           model: response.model,
+          provider: response.provider ?? aiProvider,
         },
       });
     } catch (error) {
       console.error('AI chat error:', error);
-      return res
-        .status(error?.statusCode ?? 502)
-        .json(buildChatFallback(mode, DEFAULT_CHAT_MODEL));
+      const fallback = buildChatFallback(mode, getDefaultModel('chat'), aiProvider);
+
+      return res.json({
+        ...fallback,
+        meta: {
+          ...fallback.meta,
+          fallback: true,
+          upstreamStatus: error?.statusCode ?? 502,
+          error: error?.message ?? 'AI provider request failed.',
+        },
+      });
     }
   } catch (error) {
     console.error('AI chat route error:', error);
@@ -528,8 +626,8 @@ router.post('/quest/generate', requireUser, async (req, res) => {
       analytics,
       activeQuestCount,
     });
-    const response = await callGemini({
-      model: DEFAULT_TASK_MODEL,
+    const response = await callAiModel({
+      model: getDefaultModel('task'),
       prompt: buildQuestPrompt({ snapshot }),
       systemInstruction: [
         'You draft RPG-style habit quests for an existing habit tracker app.',
@@ -571,8 +669,8 @@ router.post('/insight', requireUser, async (req, res) => {
       categoryLabels,
       days,
     });
-    const response = await callGemini({
-      model: DEFAULT_TASK_MODEL,
+    const response = await callAiModel({
+      model: getDefaultModel('task'),
       prompt: buildInsightPrompt({ analyticsPayload, days }),
       systemInstruction: [
         'You explain analytics for an RPG habit tracker app in Vietnamese.',
@@ -588,6 +686,56 @@ router.post('/insight', requireUser, async (req, res) => {
     console.error('AI insight error:', error);
     return res.status(error?.statusCode ?? 500).json({
       message: error?.message ?? 'Unable to generate analytics insight.',
+    });
+  }
+});
+
+router.post('/analytics-report', requireUser, async (req, res) => {
+  try {
+    const userId = resolveRequestedUserId(req);
+    const requestedPeriod =
+      typeof req.body?.period === 'string' ? req.body.period.trim().toLowerCase() : 'week';
+    const allowedPeriods = new Set(['day', 'week', 'month', 'year']);
+    const period = allowedPeriods.has(requestedPeriod) ? requestedPeriod : 'week';
+
+    const [character, habits, logs, categoryLabels] = await Promise.all([
+      loadCharacter(userId),
+      loadAnalyticsHabits(userId),
+      loadAnalyticsLogs(userId),
+      loadAnalyticsCategoryLabels(),
+    ]);
+    const analyticsPayload = buildUserAnalyticsPayload({
+      character,
+      habits,
+      logs,
+      categoryLabels,
+      period,
+    });
+    const reportSnapshot = buildAnalyticsReportSnapshot(analyticsPayload);
+    const response = await callGemini({
+      model: process.env.GEMINI_REPORT_MODEL || 'gemini-2.0-flash',
+      prompt: buildAnalyticsReportPrompt({ analyticsPayload: reportSnapshot, period }),
+      systemInstruction: [
+        'You write concise analytics reports for a habit tracker app in Vietnamese.',
+        'Only use facts and numbers from the supplied payload.',
+        'Return JSON only.',
+      ].join('\n'),
+      temperature: 0.25,
+      maxOutputTokens: 1400,
+    });
+
+    return res.json({
+      report: normalizeAnalyticsReport(response.parsed),
+      analytics: analyticsPayload,
+      meta: {
+        model: response.model,
+        provider: response.provider ?? 'gemini',
+      },
+    });
+  } catch (error) {
+    console.error('AI analytics report error:', error);
+    return res.status(error?.statusCode ?? 500).json({
+      message: error?.message ?? 'Unable to generate analytics report.',
     });
   }
 });

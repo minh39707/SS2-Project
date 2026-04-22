@@ -52,12 +52,14 @@ export async function sendAiChatMessage(message, options = {}) {
       userProfile,
       {
         message,
+        mode: options.mode === "habit_checkin" ? "habit_checkin" : undefined,
+        aiProvider: "ollama",
         conversationId:
           typeof options.conversationId === "string" && options.conversationId.trim()
             ? options.conversationId.trim()
             : undefined,
       },
-      25000,
+      190000,
     ),
   );
 
@@ -103,6 +105,23 @@ export async function generateAnalyticsInsight(days = 7, profileOverride = null)
         days,
       },
       25000,
+    ),
+  );
+}
+
+export async function generateAnalyticsReport(period = "week", profileOverride = null) {
+  const { userProfile: persistedProfile } = await loadAiServiceContext();
+  const userProfile = profileOverride ?? persistedProfile;
+
+  return apiRequest(
+    "/ai/analytics-report",
+    buildAuthenticatedRequestOptions(
+      userProfile,
+      {
+        userId: userProfile.id,
+        period,
+      },
+      190000,
     ),
   );
 }

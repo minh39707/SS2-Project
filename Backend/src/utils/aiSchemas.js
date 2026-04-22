@@ -158,7 +158,59 @@ function normalizeInsightResponse(payload) {
   };
 }
 
+function normalizeAnalyticsReport(payload) {
+  const normalizeList = (value, fallback, maxItems = 6) => {
+    if (!Array.isArray(value)) {
+      return fallback;
+    }
+
+    const items = value
+      .map((item) => asNonEmptyString(item))
+      .filter(Boolean)
+      .slice(0, maxItems);
+
+    return items.length > 0 ? items : fallback;
+  };
+  const normalizeMetricList = (value) => {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((metric) => ({
+        label: asNonEmptyString(metric?.label),
+        value: asNonEmptyString(metric?.value),
+        note: asNonEmptyString(metric?.note),
+      }))
+      .filter((metric) => metric.label && metric.value)
+      .slice(0, 8);
+  };
+
+  return {
+    title: asNonEmptyString(payload?.title, 'Habit Analytics Report'),
+    subtitle: asNonEmptyString(payload?.subtitle, 'AI-generated local analysis'),
+    executive_summary: asNonEmptyString(
+      payload?.executive_summary,
+      'Chua co du thong tin de tao tom tat chi tiet.',
+    ),
+    key_metrics: normalizeMetricList(payload?.key_metrics),
+    strengths: normalizeList(payload?.strengths, ['Ban da co du lieu de theo doi tien do.']),
+    risks: normalizeList(payload?.risks, ['Chua co tin hieu rui ro ro rang tu du lieu hien co.']),
+    recommendations: normalizeList(payload?.recommendations, [
+      'Tiep tuc check-in deu de bao cao sau chinh xac hon.',
+    ]),
+    next_week_plan: normalizeList(payload?.next_week_plan, [
+      'Chon mot thoi quen uu tien va giu lich check-in on dinh.',
+    ]),
+    closing_note: asNonEmptyString(
+      payload?.closing_note,
+      'Bao cao nay duoc tao tu du lieu thoi quen hien co.',
+    ),
+  };
+}
+
 module.exports = {
+  normalizeAnalyticsReport,
   normalizeChatResponse,
   normalizeInsightResponse,
   normalizeQuestDraft,

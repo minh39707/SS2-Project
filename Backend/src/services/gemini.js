@@ -1,5 +1,5 @@
-const DEFAULT_TIMEOUT_MS = 20000;
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const DEFAULT_TIMEOUT_MS = 45000;
+const DEFAULT_MODEL = process.env.GEMINI_REPORT_MODEL || 'gemini-2.0-flash';
 const JSON_RETRY_SUFFIX = [
   'Return exactly one complete JSON object.',
   'Do not include markdown fences, explanations, or trailing text.',
@@ -17,6 +17,16 @@ function stripCodeFences(value) {
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/, '')
     .trim();
+}
+
+function readIntegerEnv(name, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const value = Number.parseInt(process.env[name], 10);
+
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, value));
 }
 
 function extractTextFromCandidate(candidate) {
@@ -41,7 +51,11 @@ async function requestGemini({
   maxOutputTokens,
 }) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const timeoutMs = readIntegerEnv('GEMINI_REPORT_TIMEOUT_MS', DEFAULT_TIMEOUT_MS, {
+    min: 5000,
+    max: 120000,
+  });
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(
@@ -72,19 +86,15 @@ async function requestGemini({
         }),
       },
     );
-
     const payload = await response.json().catch(() => null);
 
     if (!response.ok) {
-      const error = new Error(
-        payload?.error?.message ?? 'Gemini request failed.',
-      );
+      const error = new Error(payload?.error?.message ?? 'Gemini request failed.');
       error.statusCode = response.status;
       throw error;
     }
 
-    const candidate = payload?.candidates?.[0];
-    const rawText = stripCodeFences(extractTextFromCandidate(candidate));
+    const rawText = stripCodeFences(extractTextFromCandidate(payload?.candidates?.[0]));
 
     if (!rawText) {
       const error = new Error('Gemini returned an empty response.');
@@ -95,7 +105,7 @@ async function requestGemini({
     return rawText;
   } catch (error) {
     if (error?.name === 'AbortError') {
-      const timeoutError = new Error('Gemini request timed out.');
+      const timeoutError = new Error('Gemini report request timed out.');
       timeoutError.statusCode = 504;
       throw timeoutError;
     }
@@ -110,7 +120,7 @@ async function callGemini({
   prompt,
   systemInstruction,
   model = DEFAULT_MODEL,
-  temperature = 0.4,
+  temperature = 0.3,
   maxOutputTokens = 1200,
 }) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -121,58 +131,55 @@ async function callGemini({
     throw error;
   }
 
-  const attemptParse = (rawText) => {
+  const parseJson = (rawText) => {
     try {
       return JSON.parse(rawText);
     } catch {
       return null;
     }
   };
+  const rawText = await requestGemini({
+    apiKey,
+    prompt,
+    systemInstruction,
+    model,
+    temperature,
+    maxOutputTokens,
+  });
+  let parsed = parseJson(rawText);
 
-  try {
-    const rawText = await requestGemini({
+  if (!parsed) {
+    const retryRawText = await requestGemini({
       apiKey,
-      prompt,
+      prompt: `${prompt}\n\n${JSON_RETRY_SUFFIX}`,
       systemInstruction,
       model,
-      temperature,
-      maxOutputTokens,
+      temperature: 0.1,
+      maxOutputTokens: Math.max(maxOutputTokens, 1400),
     });
-    let parsed = attemptParse(rawText);
+    parsed = parseJson(retryRawText);
 
     if (!parsed) {
-      const retryRawText = await requestGemini({
-        apiKey,
-        prompt: `${prompt}\n\n${JSON_RETRY_SUFFIX}`,
-        systemInstruction,
-        model,
-        temperature: 0.1,
-        maxOutputTokens: Math.max(maxOutputTokens, 1400),
-      });
-      parsed = attemptParse(retryRawText);
-
-      if (!parsed) {
-        const parseError = new Error('Gemini returned invalid JSON.');
-        parseError.statusCode = 502;
-        parseError.rawText = retryRawText;
-        throw parseError;
-      }
-
-      return {
-        model,
-        parsed,
-        rawText: retryRawText,
-      };
+      const error = new Error('Gemini returned invalid JSON.');
+      error.statusCode = 502;
+      error.rawText = retryRawText;
+      throw error;
     }
 
     return {
       model,
       parsed,
-      rawText,
+      rawText: retryRawText,
+      provider: 'gemini',
     };
-  } catch (error) {
-    throw error;
   }
+
+  return {
+    model,
+    parsed,
+    rawText,
+    provider: 'gemini',
+  };
 }
 
 module.exports = {

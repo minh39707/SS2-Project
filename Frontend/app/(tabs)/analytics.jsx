@@ -1,9 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused, useNavigation } from "@react-navigation/native";
+import * as Print from "expo-print";
 import { useRouter } from "expo-router";
+import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -20,8 +23,10 @@ import Card from "@/src/components/ui/Card";
 import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, spacing } from "@/src/constants/theme";
+import { generateAnalyticsReport } from "@/src/services/ai.service";
 import { getUserAnalytics, getUserAnalyticsBundle } from "@/src/services/user.service";
 import { useOnboarding } from "@/src/store/OnboardingContext";
+import { buildAnalyticsReportHtml } from "@/src/utils/analyticsPdf";
 
 const RANGE_OPTIONS = [
   { label: "Day", value: "day" },
@@ -442,7 +447,7 @@ export default function AnalyticsScreen() {
   const navigation = useNavigation();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { completed, hydrated } = useOnboarding();
+  const { completed, hydrated, userProfile } = useOnboarding();
   const currentCalendarYear = getCurrentCalendarYear();
   const heatmapScrollRef = useRef(null);
   const scrollViewRef = useRef(null);
@@ -465,6 +470,7 @@ export default function AnalyticsScreen() {
   const [loadError, setLoadError] = useState(null);
   const [isCompletionsExpanded, setIsCompletionsExpanded] = useState(false);
   const [isStreaksExpanded, setIsStreaksExpanded] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const hasLoadedScreenRef = useRef(false);
   const isPhoneLayout = width < 768;
   const isCompactLayout = width < 520;
@@ -769,6 +775,55 @@ export default function AnalyticsScreen() {
     }
   }, [currentCalendarYear, loadAnalyticsBundle, mergeAnalyticsResults, selectedHeatmapYear]);
 
+  const handleExportPdf = useCallback(async () => {
+    if (isExportingPdf) {
+      return;
+    }
+
+    setIsExportingPdf(true);
+
+    try {
+      const period = selectedRanges.overview ?? "week";
+      const response = await generateAnalyticsReport(period, userProfile);
+      const html = buildAnalyticsReportHtml({
+        report: response?.report,
+        analytics: response?.analytics ?? analyticsByPeriod[period] ?? overviewAnalytics,
+        period,
+      });
+      const pdf = await Print.printToFileAsync({
+        html,
+        base64: false,
+      });
+      const canShare = await Sharing.isAvailableAsync();
+
+      if (!canShare) {
+        Alert.alert("PDF ready", `Report saved at: ${pdf.uri}`);
+        return;
+      }
+
+      await Sharing.shareAsync(pdf.uri, {
+        mimeType: "application/pdf",
+        dialogTitle: "Share analytics report",
+        UTI: "com.adobe.pdf",
+      });
+    } catch (error) {
+      Alert.alert(
+        "Unable to export PDF",
+        error instanceof Error
+          ? error.message
+          : "Please check the Gemini report API configuration, then try again.",
+      );
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }, [
+    analyticsByPeriod,
+    isExportingPdf,
+    overviewAnalytics,
+    selectedRanges.overview,
+    userProfile,
+  ]);
+
   useEffect(() => {
     const unsubscribe = navigation.addListener("tabPress", (e) => {
       if (isFocused) {
@@ -980,6 +1035,24 @@ export default function AnalyticsScreen() {
               setChartRange("overview", period),
             )}
             {renderSectionLoadingBadge(selectedRanges.overview)}
+            <Pressable
+              disabled={isExportingPdf}
+              onPress={() => void handleExportPdf()}
+              style={({ pressed }) => [
+                styles.exportButton,
+                pressed && styles.exportButtonPressed,
+                isExportingPdf && styles.exportButtonDisabled,
+              ]}
+            >
+              {isExportingPdf ? (
+                <ActivityIndicator color={colors.surface} size="small" />
+              ) : (
+                <Ionicons color={colors.surface} name="document-text-outline" size={16} />
+              )}
+              <Text color="white" style={styles.exportButtonText} variant="label">
+                {isExportingPdf ? "Exporting" : "Export PDF"}
+              </Text>
+            </Pressable>
           </View>
 
           <View style={styles.quickStatsRow}>
@@ -1489,6 +1562,26 @@ const styles = StyleSheet.create({
   },
   refreshButtonPressed: {
     opacity: 0.82,
+  },
+  exportButton: {
+    minHeight: 40,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  exportButtonPressed: {
+    opacity: 0.86,
+  },
+  exportButtonDisabled: {
+    opacity: 0.68,
+  },
+  exportButtonText: {
+    fontWeight: "700",
   },
   rangeRow: {
     flexDirection: "row",
