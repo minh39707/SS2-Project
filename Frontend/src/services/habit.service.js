@@ -195,6 +195,52 @@ function getAuthenticatedProfile(persistedState, profileOverride) {
   return userProfile;
 }
 
+async function resolveRequiredUserProfile(profileOverride = null) {
+  const persistedState = await loadPersistedStateSnapshot();
+  return getAuthenticatedProfile(persistedState, profileOverride);
+}
+
+function buildUserRequestOptions(userProfile, options = {}) {
+  return {
+    ...options,
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+  };
+}
+
+async function syncNotificationsAfterHabitChange(userProfile) {
+  await syncHabitNotificationsForUser({
+    userId: userProfile.id,
+    authToken: userProfile.accessToken,
+    requestPermissions: true,
+  });
+}
+
+async function mutateHabitResource({
+  path,
+  method,
+  body,
+  profileOverride = null,
+  habitId = null,
+  syncNotifications = false,
+}) {
+  const userProfile = await resolveRequiredUserProfile(profileOverride);
+  const response = await apiRequest(
+    path,
+    buildUserRequestOptions(userProfile, {
+      method,
+      ...(body === undefined ? {} : { body }),
+    }),
+  );
+
+  if (syncNotifications) {
+    await syncNotificationsAfterHabitChange(userProfile);
+  }
+
+  invalidateHabitCaches(userProfile.id, habitId);
+  return response;
+}
+
 export async function getDashboardData(options = {}) {
   const { persistedState, userProfile } = await resolveAuthenticatedProfile();
   const cacheKey = getDashboardCacheKey(userProfile?.id);
@@ -229,27 +275,13 @@ export async function getDashboardData(options = {}) {
 }
 
 export async function createHabit(payload, profileOverride = null) {
-  const persistedState = await loadPersistedStateSnapshot();
-  const userProfile = profileOverride ?? persistedState?.userProfile ?? null;
-
-  if (!userProfile?.id) {
-    throw new Error("Please sign in before creating a new habit.");
-  }
-
-  const response = await apiRequest("/habits", {
+  return mutateHabitResource({
+    path: "/habits",
     method: "POST",
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
     body: payload,
+    profileOverride,
+    syncNotifications: true,
   });
-
-  await syncHabitNotificationsForUser({
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
-    requestPermissions: true,
-  });
-  invalidateHabitCaches(userProfile.id);
-  return response;
 }
 
 export async function listHabits(profileOverride = null, options = {}) {
@@ -293,91 +325,59 @@ export async function getHabitById(habitId, profileOverride = null, options = {}
 }
 
 export async function updateHabit(habitId, payload, profileOverride = null) {
-  const persistedState = await loadPersistedStateSnapshot();
-  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
-  const response = await apiRequest(`/habits/${habitId}`, {
+  return mutateHabitResource({
+    path: `/habits/${habitId}`,
     method: "PATCH",
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
     body: payload,
+    profileOverride,
+    habitId,
+    syncNotifications: true,
   });
-
-  await syncHabitNotificationsForUser({
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
-    requestPermissions: true,
-  });
-  invalidateHabitCaches(userProfile.id, habitId);
-  return response;
 }
 
 export async function deleteHabit(habitId, profileOverride = null) {
-  const persistedState = await loadPersistedStateSnapshot();
-  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
-  const response = await apiRequest(`/habits/${habitId}`, {
+  return mutateHabitResource({
+    path: `/habits/${habitId}`,
     method: "DELETE",
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
+    profileOverride,
+    habitId,
+    syncNotifications: true,
   });
-
-  await syncHabitNotificationsForUser({
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
-    requestPermissions: true,
-  });
-  invalidateHabitCaches(userProfile.id, habitId);
-  return response;
 }
 
 export async function completeHabit(habitId, profileOverride = null) {
-  const persistedState = await loadPersistedStateSnapshot();
-  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
-  const response = await apiRequest(`/habits/${habitId}/complete`, {
+  return mutateHabitResource({
+    path: `/habits/${habitId}/complete`,
     method: "POST",
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
+    profileOverride,
+    habitId,
   });
-
-  invalidateHabitCaches(userProfile.id, habitId);
-  return response;
 }
 
 export async function uncompleteHabit(habitId, profileOverride = null) {
-  const persistedState = await loadPersistedStateSnapshot();
-  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
-  const response = await apiRequest(`/habits/${habitId}/complete`, {
+  return mutateHabitResource({
+    path: `/habits/${habitId}/complete`,
     method: "DELETE",
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
+    profileOverride,
+    habitId,
   });
-
-  invalidateHabitCaches(userProfile.id, habitId);
-  return response;
 }
 
 export async function setHabitStatus(habitId, status, profileOverride = null) {
-  const persistedState = await loadPersistedStateSnapshot();
-  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
-  const response = await apiRequest(`/habits/${habitId}/status`, {
+  return mutateHabitResource({
+    path: `/habits/${habitId}/status`,
     method: "POST",
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
     body: { status },
+    profileOverride,
+    habitId,
   });
-
-  invalidateHabitCaches(userProfile.id, habitId);
-  return response;
 }
 
 export async function clearHabitStatus(habitId, profileOverride = null) {
-  const persistedState = await loadPersistedStateSnapshot();
-  const userProfile = getAuthenticatedProfile(persistedState, profileOverride);
-  const response = await apiRequest(`/habits/${habitId}/status`, {
+  return mutateHabitResource({
+    path: `/habits/${habitId}/status`,
     method: "DELETE",
-    userId: userProfile.id,
-    authToken: userProfile.accessToken,
+    profileOverride,
+    habitId,
   });
-
-  invalidateHabitCaches(userProfile.id, habitId);
-  return response;
 }

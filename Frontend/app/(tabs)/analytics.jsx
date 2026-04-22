@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -790,31 +791,41 @@ export default function AnalyticsScreen() {
         analytics: response?.analytics ?? analyticsByPeriod[period] ?? overviewAnalytics,
         period,
       });
+
+      if (Platform.OS === "ios") {
+        setIsExportingPdf(false);
+        await Print.printAsync({ html });
+        return;
+      }
+
       const pdf = await Print.printToFileAsync({
         html,
         base64: false,
       });
       const canShare = await Sharing.isAvailableAsync();
 
+      setIsExportingPdf(false);
+
       if (!canShare) {
         Alert.alert("PDF ready", `Report saved at: ${pdf.uri}`);
         return;
       }
 
-      await Sharing.shareAsync(pdf.uri, {
+      void Sharing.shareAsync(pdf.uri, {
         mimeType: "application/pdf",
-        dialogTitle: "Share analytics report",
+        dialogTitle: "Save or share analytics report",
         UTI: "com.adobe.pdf",
+      }).catch(() => {
+        // Dismissing the system share sheet is not an export failure.
       });
     } catch (error) {
+      setIsExportingPdf(false);
       Alert.alert(
         "Unable to export PDF",
         error instanceof Error
           ? error.message
           : "Please check the Gemini report API configuration, then try again.",
       );
-    } finally {
-      setIsExportingPdf(false);
     }
   }, [
     analyticsByPeriod,

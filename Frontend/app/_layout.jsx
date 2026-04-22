@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import Constants from "expo-constants";
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Platform } from "react-native";
@@ -9,7 +8,7 @@ import { colors } from '@/src/constants/colors';
 import { OnboardingProvider } from '@/src/store/OnboardingContext';
 
 const notificationsModule =
-  Platform.OS === "web" || Constants.appOwnership === "expo"
+  Platform.OS === "web"
     ? null
     : require("expo-notifications");
 const useLastNotificationResponse =

@@ -58,7 +58,7 @@ function getDefaultReminder(preferredTime) {
 }
 
 function getDefaultStartDate(createdAt) {
-  return (createdAt ?? new Date().toISOString()).split("T")[0];
+  return toDateKey(createdAt ?? new Date());
 }
 
 function buildDefaultHabitMetadata(createdAt, preferredTime = "morning") {

@@ -7,9 +7,20 @@ const {
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_SCHEDULE_LOOKBACK_DAYS = 370;
+const APP_TIME_ZONE = process.env.APP_TIME_ZONE || "Asia/Ho_Chi_Minh";
+let appDateFormatter = null;
 
-function padNumber(value) {
-  return String(value).padStart(2, "0");
+function getAppDateFormatter() {
+  if (!appDateFormatter) {
+    appDateFormatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: APP_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  }
+
+  return appDateFormatter;
 }
 
 function toDateKey(value = new Date()) {
@@ -23,11 +34,14 @@ function toDateKey(value = new Date()) {
     throw new Error("Invalid date value.");
   }
 
-  return [
-    date.getFullYear(),
-    padNumber(date.getMonth() + 1),
-    padNumber(date.getDate()),
-  ].join("-");
+  const parts = Object.fromEntries(
+    getAppDateFormatter()
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+
+  return [parts.year, parts.month, parts.day].join("-");
 }
 
 function parseDateKey(dateKey) {

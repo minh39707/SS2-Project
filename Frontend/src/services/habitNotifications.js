@@ -1,10 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { apiRequest } from "@/src/services/api";
 import { formatTimeLabel } from "@/src/utils/onboarding";
 
-const NOTIFICATION_CHANNEL_ID = "habit-reminders";
+const NOTIFICATION_CHANNEL_ID = "habit-reminders-v2";
 const STORAGE_KEY_PREFIX = "habit-app:habit-notifications";
 const WEEKDAY_TO_NOTIFICATION_DAY = {
   sun: 1,
@@ -16,13 +15,11 @@ const WEEKDAY_TO_NOTIFICATION_DAY = {
   sat: 7,
 };
 
-const isExpoGo = Constants.appOwnership === "expo";
-
 let notificationsModulePromise = null;
 let didConfigureNotificationHandler = false;
 
 async function getNotificationsModuleAsync() {
-  if (Platform.OS === "web" || isExpoGo) {
+  if (Platform.OS === "web") {
     return null;
   }
 
@@ -34,7 +31,7 @@ async function getNotificationsModuleAsync() {
         if (!didConfigureNotificationHandler) {
           Notifications.setNotificationHandler({
             handleNotification: async () => ({
-              shouldPlaySound: false,
+              shouldPlaySound: true,
               shouldSetBadge: false,
               shouldShowBanner: true,
               shouldShowList: true,
@@ -130,7 +127,7 @@ function buildNotificationContent(habit, reminderTime) {
         ? `Check-in thói quen: ${habit.title}`
         : `Nhớ thực hiện: ${habit.title}`,
     body: getReminderBody(habit, reminderTime),
-    sound: false,
+    sound: "default",
     data: {
       url: "/habit-manage",
       habitId: habit.id,
@@ -142,6 +139,7 @@ function buildNotificationContent(habit, reminderTime) {
 
 function buildScheduleKey(habit, suffix) {
   return [
+    NOTIFICATION_CHANNEL_ID,
     habit.id,
     normalizeText(habit.title),
     normalizeText(habit.habitType),
@@ -235,7 +233,10 @@ async function ensureNotificationChannelAsync(Notifications) {
 
   await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNEL_ID, {
     name: "Habit reminders",
-    importance: Notifications.AndroidImportance.DEFAULT,
+    importance: Notifications.AndroidImportance.MAX,
+    sound: "default",
+    enableVibrate: true,
+    vibrationPattern: [0, 250, 250, 250],
   });
 }
 

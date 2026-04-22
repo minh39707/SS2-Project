@@ -23,6 +23,7 @@ npm install
 
 ```env
 PORT=4000
+APP_TIME_ZONE=Asia/Ho_Chi_Minh
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 AI_PROVIDER=ollama
@@ -41,6 +42,7 @@ GEMINI_REPORT_TIMEOUT_MS=60000
 `Backend/.env` variables:
 
 - `PORT`: local Express port, usually `4000`
+- `APP_TIME_ZONE`: timezone used for habit dates, streaks, AI check-ins, and analytics date ranges; defaults to `Asia/Ho_Chi_Minh`
 - `SUPABASE_URL`: Supabase project URL
 - `SUPABASE_SERVICE_ROLE_KEY`: backend admin key for database operations
 - `AI_PROVIDER`: local AI provider; this backend uses `ollama`

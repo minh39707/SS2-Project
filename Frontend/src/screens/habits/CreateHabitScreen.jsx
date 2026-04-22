@@ -122,8 +122,21 @@ function resolveCategoryOption(categoryLabel) {
 }
 
 function toDateFromValue(value) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day);
+  }
+
   const parsedDate = value ? new Date(value) : new Date();
   return Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+}
+
+function toLocalDateKey(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function normalizeTargetValueInput(value) {
@@ -427,7 +440,7 @@ export default function CreateHabitScreen() {
     frequencyDays: frequencyType === "weekly" ? frequencyDays : [],
     preferredTime,
     categoryLabel: selectedCategory.label,
-    startDate: startDate.toISOString().split("T")[0],
+    startDate: toLocalDateKey(startDate),
     reminders,
   });
 
