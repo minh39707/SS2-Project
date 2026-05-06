@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,7 +16,14 @@ import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";
 import { radii, shadows, spacing } from "@/src/constants/theme";
 import { getDashboardData } from "@/src/services/habit.service";
-import { getStoreInventory, getStoreItems } from "@/src/services/store.service";
+import {
+  buyItem,
+  equipItem,
+  getStoreInventory,
+  getStoreItems,
+  sellItem,
+  useItem as activateStoreItem,
+} from "@/src/services/store.service";
 import { getCurrentUser } from "@/src/services/user.service";
 
 const SHOP_SECTIONS = [
@@ -48,34 +56,12 @@ const SHOP_SECTIONS = [
   },
 ];
 
-const INVENTORY_ITEMS = [
-  {
-    id: "inv-hp-small",
-    name: "Small Heal",
-    icon: "heart",
-    iconColor: "#16A34A",
-    iconBg: "#DCFCE7",
-    quantity: 5,
-    equipped: false,
-  },
-  {
-    id: "inv-exp",
-    name: "Double XP",
-    icon: "flash",
-    iconColor: "#2563EB",
-    iconBg: "#DBEAFE",
-    quantity: 2,
-    equipped: false,
-  },
-];
-
 function formatCoins(value) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
 function buildStatValue(stats, label, fallbackValue = 0, fallbackMax = 100) {
   const matched = stats?.find((item) => item.label === label);
-
   return {
     value: matched?.value ?? fallbackValue,
     max: matched?.max ?? fallbackMax,
@@ -84,15 +70,15 @@ function buildStatValue(stats, label, fallbackValue = 0, fallbackMax = 100) {
 
 function chunkItems(items = [], size = 2) {
   const rows = [];
-
   for (let index = 0; index < items.length; index += size) {
     rows.push(items.slice(index, index + size));
   }
-
   return rows;
 }
 
-function ShopItemRow({ item }) {
+function ShopItemRow({ item, onBuy, disabled, coinBalance }) {
+  const canAfford = coinBalance >= item.price;
+
   return (
     <View style={styles.shopItem}>
       <View style={[styles.shopItemIcon, { backgroundColor: item.iconBg }]}>
@@ -111,11 +97,15 @@ function ShopItemRow({ item }) {
         </Text>
       </View>
 
-      <Pressable style={styles.priceChip}>
+      <Pressable
+        disabled={disabled || !canAfford}
+        onPress={() => onBuy(item)}
+        style={[styles.priceChip, !canAfford && styles.priceChipInsufficient]}
+      >
         <View style={styles.priceCoinCircle}>
-          <Ionicons color="#FACC15" name="logo-usd" size={13} />
+          <Ionicons color={canAfford ? "#FACC15" : "#94A3B8"} name="logo-usd" size={13} />
         </View>
-        <Text style={styles.priceChipText} variant="caption">
+        <Text style={[styles.priceChipText, !canAfford && styles.priceChipTextInsufficient]} variant="caption">
           {item.price}
         </Text>
       </Pressable>
@@ -123,7 +113,20 @@ function ShopItemRow({ item }) {
   );
 }
 
-function InventoryCard({ item }) {
+function InventoryCard({ item, onUse, onSell, onEquip, disabled }) {
+  const isEquippable = item.canEquip === true || item.primaryAction === "equip";
+  const isUsable = item.canUse === true || item.primaryAction === "use";
+  const primaryLabel = isEquippable ? (item.equipped ? "Unequip" : "Equip") : "Use";
+  const isPrimaryDisabled = disabled || (!isEquippable && !isUsable);
+
+  const handlePrimary = () => {
+    if (isEquippable) {
+      onEquip(item);
+    } else if (isUsable) {
+      onUse(item);
+    }
+  };
+
   return (
     <View style={[styles.inventoryCard, item.equipped && styles.inventoryCardEquipped]}>
       {item.equipped ? (
@@ -148,10 +151,17 @@ function InventoryCard({ item }) {
         {item.name}
       </Text>
 
+      <Text numberOfLines={1} color="muted" style={styles.inventoryEffect} variant="caption">
+        {item.effectLabel ?? item.effect ?? "Passive"}
+      </Text>
+
       <Pressable
+        disabled={isPrimaryDisabled}
+        onPress={handlePrimary}
         style={[
           styles.inventoryButton,
           item.equipped && styles.inventoryButtonEquipped,
+          isPrimaryDisabled && styles.inventoryButtonDisabled,
         ]}
       >
         <Text
@@ -161,9 +171,22 @@ function InventoryCard({ item }) {
           ]}
           variant="body"
         >
-          {item.equipped ? "Unequip" : "Use"}
+          {isUsable || isEquippable ? primaryLabel : "Passive"}
         </Text>
       </Pressable>
+
+      {item.isTradeable ? (
+        <Pressable
+          disabled={disabled}
+          onPress={() => onSell(item)}
+          style={[styles.sellButton, disabled && styles.inventoryButtonDisabled]}
+        >
+          <Ionicons color="#D97706" name="logo-usd" size={12} />
+          <Text style={styles.sellButtonText} variant="caption">
+            Sell · {item.sellPrice}
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -176,6 +199,8 @@ export default function StoreScreen() {
   const [shopSections, setShopSections] = useState(SHOP_SECTIONS);
   const [inventoryItems, setInventoryItems] = useState([]);
   const [loadingStore, setLoadingStore] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [localCoinBalance, setLocalCoinBalance] = useState(null);
 
   useEffect(() => {
     if (!isFocused) {
@@ -186,6 +211,7 @@ export default function StoreScreen() {
 
     const hydrate = async () => {
       setLoadingStore(true);
+      setLocalCoinBalance(null);
 
       try {
         const [userProfile, dashboard, storeResponse, inventoryResponse] = await Promise.all([
@@ -207,9 +233,7 @@ export default function StoreScreen() {
             : SHOP_SECTIONS,
         );
         setInventoryItems(
-          Array.isArray(inventoryResponse?.items) && inventoryResponse.items.length > 0
-            ? inventoryResponse.items
-            : INVENTORY_ITEMS,
+          Array.isArray(inventoryResponse?.items) ? inventoryResponse.items : [],
         );
       } catch (error) {
         if (__DEV__) {
@@ -235,12 +259,142 @@ export default function StoreScreen() {
   const exp = buildStatValue(stats, "EXP", player?.currentExp ?? 0, player?.expToNextLevel ?? 100);
   const streak = buildStatValue(stats, "Streaks", 0, 7);
   const heroName = profile?.name ?? "Habit Hero";
-  const coinBalance = player?.goldCoins ?? profile?.goldCoins ?? 0;
+  const baseCoinBalance = player?.goldCoins ?? profile?.goldCoins ?? 0;
+  const coinBalance = localCoinBalance ?? baseCoinBalance;
   const level = player?.level ?? profile?.level ?? 1;
   const providerLabel = "Google sync";
   const hpProgress = hp.max > 0 ? Math.max(0, Math.min(1, hp.value / hp.max)) : 0;
   const expProgress = exp.max > 0 ? Math.max(0, Math.min(1, exp.value / exp.max)) : 0;
   const inventoryRows = useMemo(() => chunkItems(inventoryItems, 2), [inventoryItems]);
+
+  const refreshInventory = useCallback(async () => {
+    const inv = await getStoreInventory();
+    if (Array.isArray(inv?.items)) {
+      setInventoryItems(inv.items);
+    }
+  }, []);
+
+  const handleBuy = useCallback(
+    (item) => {
+      if (actionLoading) return;
+
+      if (coinBalance < item.price) {
+        Alert.alert("Không đủ vàng", `Bạn cần ${item.price} vàng để mua "${item.name}".`);
+        return;
+      }
+
+      Alert.alert(
+        "Mua vật phẩm",
+        `Mua "${item.name}" với ${item.price} vàng?`,
+        [
+          { text: "Hủy", style: "cancel" },
+          {
+            text: "Mua",
+            onPress: async () => {
+              setActionLoading(true);
+              try {
+                const result = await buyItem(item.id);
+                setLocalCoinBalance(result.gold_coins);
+                await refreshInventory();
+                Alert.alert("Mua thành công!", `"${item.name}" đã được thêm vào kho đồ.`);
+              } catch (err) {
+                Alert.alert("Lỗi", err?.message ?? "Không thể mua vật phẩm.");
+              } finally {
+                setActionLoading(false);
+              }
+            },
+          },
+        ],
+      );
+    },
+    [actionLoading, coinBalance, refreshInventory],
+  );
+
+  const handleUse = useCallback(
+    (item) => {
+      if (actionLoading) return;
+
+      Alert.alert(
+        "Sử dụng vật phẩm",
+        `Sử dụng "${item.name}"?`,
+        [
+          { text: "Hủy", style: "cancel" },
+          {
+            text: "Sử dụng",
+            onPress: async () => {
+              setActionLoading(true);
+              try {
+                const result = await activateStoreItem(item.id);
+                if (result.character?.gold_coins !== undefined) {
+                  setLocalCoinBalance(result.character.gold_coins);
+                }
+                const [inv, dash] = await Promise.all([
+                  getStoreInventory(),
+                  getDashboardData({ forceRefresh: true }),
+                ]);
+                if (Array.isArray(inv?.items)) setInventoryItems(inv.items);
+                if (dash) setDashboardData(dash);
+                Alert.alert("Đã sử dụng!", result.message ?? `"${item.name}" đã được kích hoạt.`);
+              } catch (err) {
+                Alert.alert("Lỗi", err?.message ?? "Không thể sử dụng vật phẩm.");
+              } finally {
+                setActionLoading(false);
+              }
+            },
+          },
+        ],
+      );
+    },
+    [actionLoading],
+  );
+
+  const handleSell = useCallback(
+    (item) => {
+      if (actionLoading) return;
+
+      Alert.alert(
+        "Bán vật phẩm",
+        `Bán "${item.name}" được ${item.sellPrice} vàng?`,
+        [
+          { text: "Hủy", style: "cancel" },
+          {
+            text: "Bán",
+            style: "destructive",
+            onPress: async () => {
+              setActionLoading(true);
+              try {
+                const result = await sellItem(item.id);
+                setLocalCoinBalance(result.gold_coins);
+                await refreshInventory();
+                Alert.alert("Đã bán!", `Nhận được ${item.sellPrice} vàng.`);
+              } catch (err) {
+                Alert.alert("Lỗi", err?.message ?? "Không thể bán vật phẩm.");
+              } finally {
+                setActionLoading(false);
+              }
+            },
+          },
+        ],
+      );
+    },
+    [actionLoading, refreshInventory],
+  );
+
+  const handleEquip = useCallback(
+    async (item) => {
+      if (actionLoading) return;
+      setActionLoading(true);
+      try {
+        await equipItem(item.id, !item.equipped);
+        await refreshInventory();
+      } catch (err) {
+        Alert.alert("Lỗi", err?.message ?? "Không thể trang bị vật phẩm.");
+      } finally {
+        setActionLoading(false);
+      }
+    },
+    [actionLoading, refreshInventory],
+  );
 
   return (
     <View style={styles.screen}>
@@ -414,7 +568,13 @@ export default function StoreScreen() {
                 ) : section.items.length > 0 ? (
                   <View style={styles.shopList}>
                     {section.items.map((item) => (
-                      <ShopItemRow item={item} key={item.id} />
+                      <ShopItemRow
+                        coinBalance={coinBalance}
+                        disabled={actionLoading}
+                        item={item}
+                        key={item.id}
+                        onBuy={handleBuy}
+                      />
                     ))}
                   </View>
                 ) : (
@@ -444,7 +604,14 @@ export default function StoreScreen() {
                 {inventoryRows.map((row, rowIndex) => (
                   <View key={`inventory-row-${rowIndex}`} style={styles.inventoryRow}>
                     {row.map((item) => (
-                      <InventoryCard item={item} key={item.id} />
+                      <InventoryCard
+                        disabled={actionLoading}
+                        item={item}
+                        key={item.id}
+                        onEquip={handleEquip}
+                        onSell={handleSell}
+                        onUse={handleUse}
+                      />
                     ))}
 
                     {row.length === 1 ? <View style={styles.inventoryCardPlaceholder} /> : null}
@@ -720,6 +887,11 @@ const styles = StyleSheet.create({
     gap: 6,
     ...shadows.soft,
   },
+  priceChipInsufficient: {
+    backgroundColor: colors.surfaceMuted,
+    shadowOpacity: 0,
+    elevation: 0,
+  },
   priceCoinCircle: {
     width: 18,
     height: 18,
@@ -732,6 +904,9 @@ const styles = StyleSheet.create({
     color: "#FFE066",
     fontWeight: "800",
     fontSize: 12,
+  },
+  priceChipTextInsufficient: {
+    color: colors.textMuted,
   },
   emptyTierCard: {
     height: 16,
@@ -798,8 +973,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   inventoryIconWrap: {
-    width: 102,
-    height: 102,
+    width: 88,
+    height: 88,
     marginTop: 8,
     alignItems: "center",
     justifyContent: "center",
@@ -807,13 +982,18 @@ const styles = StyleSheet.create({
   inventoryName: {
     textAlign: "center",
     color: colors.text,
-    minHeight: 58,
+    minHeight: 44,
     paddingHorizontal: 6,
+  },
+  inventoryEffect: {
+    textAlign: "center",
+    fontWeight: "700",
+    minHeight: 18,
   },
   inventoryButton: {
     marginTop: "auto",
     alignSelf: "stretch",
-    minHeight: 52,
+    minHeight: 48,
     borderRadius: radii.pill,
     alignItems: "center",
     justifyContent: "center",
@@ -825,6 +1005,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0,
     elevation: 0,
   },
+  inventoryButtonDisabled: {
+    opacity: 0.5,
+  },
   inventoryButtonText: {
     color: "#FFFFFF",
     fontWeight: "800",
@@ -832,6 +1015,22 @@ const styles = StyleSheet.create({
   },
   inventoryButtonTextEquipped: {
     color: colors.primary,
+  },
+  sellButton: {
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 9,
+    borderRadius: radii.pill,
+    backgroundColor: "#FFF9E8",
+    borderWidth: 1,
+    borderColor: "#F8DD7D",
+  },
+  sellButtonText: {
+    color: "#D97706",
+    fontWeight: "700",
   },
   inventoryEmptyCard: {
     minHeight: 120,

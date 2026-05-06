@@ -11,6 +11,7 @@ const dashboardRoutes = require('./routes/dashboard');
 const habitsRoutes = require('./routes/habits');
 const aiRoutes = require('./routes/ai');
 const storeRoutes = require('./routes/store');
+const questsRoutes = require('./routes/quests');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -28,6 +29,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/habits', habitsRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/store', storeRoutes);
+app.use('/api/quests', questsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

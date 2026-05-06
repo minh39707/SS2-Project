@@ -3,12 +3,7 @@ const { supabase } = require('../supabase');
 const { requireUser } = require('../middleware/auth');
 const habitsRouter = require('./habits');
 const { buildUserAnalyticsPayload } = require('../utils/userAnalytics');
-const { callGemini } = require('../services/gemini');
-const {
-  callAiModel,
-  getAiProvider,
-  getDefaultModel,
-} = require('../services/aiProvider');
+const { callAiModel, getDefaultChatModel, getDefaultTaskModel } = require('../services/aiProvider');
 const {
   CHAT_SYSTEM_PROMPT,
   HABIT_CHECKIN_SYSTEM_PROMPT,
@@ -19,15 +14,17 @@ const {
   buildAnalyticsReportPrompt,
 } = require('../utils/aiPrompts');
 const {
-  normalizeAnalyticsReport,
   normalizeChatResponse,
   normalizeInsightResponse,
   normalizeQuestDraft,
+  normalizeAnalyticsReport,
 } = require('../utils/aiSchemas');
 const { isNegativeHabit, isPositiveHabit } = require('../utils/habitStatus');
 const { toDateKey } = require('../utils/habitProgress');
 
 const router = express.Router();
+const DEFAULT_CHAT_MODEL = getDefaultChatModel();
+const DEFAULT_TASK_MODEL = getDefaultTaskModel();
 const habitsAiHelpers = habitsRouter.aiHelpers ?? {};
 
 function normalizeVietnamese(value) {
@@ -119,24 +116,8 @@ function classifyChatMode(message) {
   return 'support_chat';
 }
 
-function isSupportStyleMessage(message) {
-  const normalizedMessage = normalizeVietnamese(message);
-
-  if (!normalizedMessage) {
-    return false;
-  }
-
-  const supportPrefixes = ['xin chao', 'chao', 'hello', 'hi', 'hey'];
-  const providerMentions = ['qwen', 'ollama', 'gemma'];
-
-  return (
-    supportPrefixes.some((prefix) => normalizedMessage.startsWith(prefix)) ||
-    providerMentions.some((provider) => normalizedMessage.includes(provider))
-  );
-}
-
 function resolveChatMode(req, message) {
-  if (req.body?.mode === 'habit_checkin' && !isSupportStyleMessage(message)) {
+  if (req.body?.mode === 'habit_checkin') {
     return 'habit_checkin';
   }
 
@@ -333,67 +314,6 @@ function buildQuestSnapshot({ user, character, habits, analytics, activeQuestCou
   };
 }
 
-function buildAnalyticsReportSnapshot(analyticsPayload) {
-  const summary = analyticsPayload?.summary ?? {};
-
-  return {
-    profile: analyticsPayload?.profile
-      ? {
-          username: analyticsPayload.profile.username,
-          created_at: analyticsPayload.profile.created_at,
-        }
-      : null,
-    range: analyticsPayload?.range ?? null,
-    player: analyticsPayload?.player ?? null,
-    summary: {
-      scheduledCount: summary.scheduledCount ?? 0,
-      successCount: summary.successCount ?? 0,
-      completedCount: summary.completedCount ?? 0,
-      missedCount: summary.missedCount ?? 0,
-      avoidedCount: summary.avoidedCount ?? 0,
-      failedCount: summary.failedCount ?? 0,
-      totalExpGained: summary.totalExpGained ?? 0,
-      totalHpChange: summary.totalHpChange ?? 0,
-      completionRate: summary.completionRate ?? 0,
-      avoidanceRate: summary.avoidanceRate ?? 0,
-      activeDays: summary.activeDays ?? 0,
-      activeHabitCount: summary.activeHabitCount ?? 0,
-      activeGlobalStreak: summary.activeGlobalStreak ?? 0,
-      bestHabitStreak: summary.bestHabitStreak ?? 0,
-      goodHabits: summary.goodHabits ?? null,
-      badHabits: summary.badHabits ?? null,
-    },
-    topHabits: (analyticsPayload?.topHabits ?? []).slice(0, 8).map((habit) => ({
-      title: habit.title,
-      habitType: habit.habitType,
-      successCount: habit.successCount,
-      completedCount: habit.completedCount,
-      avoidedCount: habit.avoidedCount,
-      failedCount: habit.failedCount,
-      missedCount: habit.missedCount,
-      successRate: habit.successRate,
-      currentStreak: habit.currentStreak,
-    })),
-    weekdayBreakdown: (analyticsPayload?.weekdayBreakdown ?? []).map((day) => ({
-      label: day.label,
-      successCount: day.successCount,
-      completedCount: day.completedCount,
-      avoidedCount: day.avoidedCount,
-      failedCount: day.failedCount,
-    })),
-    categoryBreakdown: (analyticsPayload?.categoryBreakdown ?? []).slice(0, 8).map((category) => ({
-      label: category.label,
-      successCount: category.successCount,
-      percentage: category.percentage,
-    })),
-    streakHabits: (analyticsPayload?.streakHabits ?? []).slice(0, 8).map((habit) => ({
-      title: habit.title,
-      currentStreak: habit.currentStreak,
-      bestStreak: habit.bestStreak,
-    })),
-  };
-}
-
 function buildCheckinExecutionReply(habit, actionType, isAlreadyLogged = false) {
   if (isAlreadyLogged) {
     return `Habit "${habit.title}" đã được ghi nhận cho hôm nay rồi.`;
@@ -409,10 +329,10 @@ function buildCheckinExecutionReply(habit, actionType, isAlreadyLogged = false) 
   }
 
   if (actionType === 'failed') {
-    return `Minh da ghi nhan "${habit.title}" la ban chua tranh duoc hom nay.`;
+    return `Minh đã ghi nhận "${habit.title}" là bạn chưa tránh được hôm nay.`;
   }
 
-  return `Minh da danh dau hoan thanh "${habit.title}" cho hom nay.`;
+  return `Minh đã đánh dấu hòan thành "${habit.title}" cho hôm nay.`;
 }
 
 async function applyHabitCheckinAction(userId, habits, action) {
@@ -422,7 +342,7 @@ async function applyHabitCheckinAction(userId, habits, action) {
     return {
       clarification_needed: true,
       clarification_question:
-        'Minh chua khop duoc chinh xac thoi quen ban muon check-in. Ban noi ro ten habit giup minh nhe?',
+        'Mình chưa khớp được chính xác thói quen bạn muốn check-in. Bạn nói rõ tên habit giúp mình nhé?',
     };
   }
 
@@ -447,7 +367,7 @@ async function applyHabitCheckinAction(userId, habits, action) {
   ) {
     return {
       clarification_needed: true,
-      clarification_question: `Cach check-in nay chua phu hop voi habit "${habit.title}". Ban thu noi ro hon nhe?`,
+      clarification_question: `Cách check-in này chưa phù p voi habit "${habit.title}". Ban thu noi ro hon nhe?`,
     };
   }
 
@@ -466,7 +386,7 @@ async function applyHabitCheckinAction(userId, habits, action) {
   if (!fullHabit) {
     return {
       clarification_needed: true,
-      clarification_question: 'Minh khong tim thay habit nay trong du lieu hien tai cua ban.',
+      clarification_question: 'Mình không tìm thấy habit này trong dữ liệu hiện tại của bạn.',
     };
   }
 
@@ -492,21 +412,21 @@ async function applyHabitCheckinAction(userId, habits, action) {
   };
 }
 
-function buildChatFallback(mode, model, provider) {
+function buildChatFallback(mode, model) {
   const fallback = normalizeChatResponse(
     mode === 'habit_checkin'
       ? {
           mode: 'habit_checkin',
           intent: 'check_in',
-          reply: 'Minh can ban noi ro hon thoi quen ban muon check-in.',
+          reply: 'Mình cần bạn nói rõ hơn thói quen bạn muốn check-in.',
           actions: [],
           clarification_needed: true,
-          clarification_question: 'Ban dang muon check-in thoi quen nao vay?',
+          clarification_question: 'Bạn đang muốn check-in thói quen nào vậy?',
         }
       : {
           mode: 'support_chat',
           reply:
-            'Minh co the ho tro ve cach dung app, streak, EXP, HP, quest va meo xay dung thoi quen.',
+            'Mình có thể hỗ trợ về cách dùng app, streak, EXP, HP, quest và mẹo xây dựng thói quen.',
           actions: [],
           clarification_needed: false,
           clarification_question: null,
@@ -516,7 +436,7 @@ function buildChatFallback(mode, model, provider) {
 
   return {
     ...fallback,
-    meta: { model, provider, fallback: true },
+    meta: { model },
   };
 }
 
@@ -531,7 +451,6 @@ router.post('/chat', requireUser, async (req, res) => {
     }
 
     const mode = resolveChatMode(req, message);
-    const aiProvider = getAiProvider();
     const habits = mode === 'habit_checkin' ? await loadChatHabitContext(req.userId) : [];
     const availableHabitTitles = habits.map((habit) => habit.title).filter(Boolean);
     const prompt =
@@ -543,7 +462,7 @@ router.post('/chat', requireUser, async (req, res) => {
 
     try {
       const response = await callAiModel({
-        model: getDefaultModel('chat'),
+        model: DEFAULT_CHAT_MODEL,
         prompt,
         systemInstruction,
         temperature: mode === 'habit_checkin' ? 0.2 : 0.6,
@@ -575,12 +494,11 @@ router.post('/chat', requireUser, async (req, res) => {
         ...normalized,
         meta: {
           model: response.model,
-          provider: response.provider ?? aiProvider,
         },
       });
     } catch (error) {
       console.error('AI chat error:', error);
-      const fallback = buildChatFallback(mode, getDefaultModel('chat'), aiProvider);
+      const fallback = buildChatFallback(mode, DEFAULT_CHAT_MODEL);
 
       return res.json({
         ...fallback,
@@ -627,7 +545,7 @@ router.post('/quest/generate', requireUser, async (req, res) => {
       activeQuestCount,
     });
     const response = await callAiModel({
-      model: getDefaultModel('task'),
+      model: DEFAULT_TASK_MODEL,
       prompt: buildQuestPrompt({ snapshot }),
       systemInstruction: [
         'You draft RPG-style habit quests for an existing habit tracker app.',
@@ -670,7 +588,7 @@ router.post('/insight', requireUser, async (req, res) => {
       days,
     });
     const response = await callAiModel({
-      model: getDefaultModel('task'),
+      model: DEFAULT_TASK_MODEL,
       prompt: buildInsightPrompt({ analyticsPayload, days }),
       systemInstruction: [
         'You explain analytics for an RPG habit tracker app in Vietnamese.',
@@ -693,10 +611,7 @@ router.post('/insight', requireUser, async (req, res) => {
 router.post('/analytics-report', requireUser, async (req, res) => {
   try {
     const userId = resolveRequestedUserId(req);
-    const requestedPeriod =
-      typeof req.body?.period === 'string' ? req.body.period.trim().toLowerCase() : 'week';
-    const allowedPeriods = new Set(['day', 'week', 'month', 'year']);
-    const period = allowedPeriods.has(requestedPeriod) ? requestedPeriod : 'week';
+    const period = typeof req.body?.period === 'string' ? req.body.period.trim() : 'week';
 
     const [character, habits, logs, categoryLabels] = await Promise.all([
       loadCharacter(userId),
@@ -704,6 +619,7 @@ router.post('/analytics-report', requireUser, async (req, res) => {
       loadAnalyticsLogs(userId),
       loadAnalyticsCategoryLabels(),
     ]);
+
     const analyticsPayload = buildUserAnalyticsPayload({
       character,
       habits,
@@ -711,26 +627,22 @@ router.post('/analytics-report', requireUser, async (req, res) => {
       categoryLabels,
       period,
     });
-    const reportSnapshot = buildAnalyticsReportSnapshot(analyticsPayload);
-    const response = await callGemini({
-      model: process.env.GEMINI_REPORT_MODEL || 'gemini-2.0-flash',
-      prompt: buildAnalyticsReportPrompt({ analyticsPayload: reportSnapshot, period }),
+
+    const response = await callAiModel({
+      model: DEFAULT_TASK_MODEL,
+      prompt: buildAnalyticsReportPrompt({ analyticsPayload, period }),
       systemInstruction: [
-        'You write concise analytics reports for a habit tracker app in Vietnamese.',
-        'Only use facts and numbers from the supplied payload.',
+        'You write Vietnamese analytics reports for an RPG habit tracker app.',
+        'Only use facts and numbers from the supplied analytics payload.',
         'Return JSON only.',
       ].join('\n'),
-      temperature: 0.25,
-      maxOutputTokens: 1400,
+      temperature: 0.3,
+      maxOutputTokens: 1500,
     });
 
     return res.json({
       report: normalizeAnalyticsReport(response.parsed),
       analytics: analyticsPayload,
-      meta: {
-        model: response.model,
-        provider: response.provider ?? 'gemini',
-      },
     });
   } catch (error) {
     console.error('AI analytics report error:', error);
