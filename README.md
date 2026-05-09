@@ -1,10 +1,75 @@
-# SS2 Project
+# HabitForge
 
 Habit-tracking monorepo with:
 
 - `Frontend/`: Expo Router + React Native mobile app
 - `Backend/`: Express API server
 - Supabase for auth and persistence
+
+## Project Structure
+
+```
+HabitForge/
+├── Backend/
+│   └── src/
+│       ├── index.js               # Express entry point
+│       ├── supabase.js            # Supabase admin client
+│       ├── middleware/
+│       │   └── auth.js            # JWT auth middleware
+│       ├── routes/                # One file per API resource
+│       │   ├── ai.js
+│       │   ├── auth.js
+│       │   ├── dashboard.js
+│       │   ├── habits.js
+│       │   ├── onboarding.js
+│       │   ├── quests.js
+│       │   ├── store.js
+│       │   └── users.js
+│       ├── services/              # External integrations
+│       │   ├── aiProvider.js      # Gemini / Ollama abstraction
+│       │   └── gemini.js          # Gemini analytics report client
+│       └── utils/                 # Pure helpers, no side effects
+│           ├── aiPrompts.js
+│           ├── aiSchemas.js
+│           ├── avatarUrl.js
+│           ├── frequencyDays.js
+│           ├── habitProgress.js
+│           ├── habitStatus.js
+│           └── userAnalytics.js
+│
+└── Frontend/
+    ├── app/                       # Expo Router routes (file = route)
+    │   ├── _layout.jsx            # Root stack + notification handler
+    │   ├── index.jsx              # App entry / redirect
+    │   ├── auth-callback.jsx      # OAuth deep-link handler
+    │   ├── modal.jsx
+    │   ├── (auth)/                # sign-in, sign-up (no bottom tab)
+    │   ├── (habits)/              # habit-create, habit-edit,
+    │   │                          #   habit-manage, habit-focus
+    │   ├── (onboarding)/          # welcome → select → schedule → save
+    │   └── (tabs)/                # index (dashboard), analytics,
+    │                              #   store, settings
+    └── src/
+        ├── components/
+        │   ├── auth/              # AuthField, AuthScreenFrame, …
+        │   ├── dashboard/         # HabitCard, CalendarStrip, …
+        │   ├── habits/            # CreateHabitScreen, DaySelector, …
+        │   ├── layout/            # BackHeader, BottomTab, FloatingButton, AssistantChat
+        │   └── ui/                # Button, Card, Text, ScreenContainer,
+        │                          #   ThemedText, ThemedView, HapticTab, …
+        ├── constants/             # colors.js, theme.js, onboarding.js
+        ├── hooks/                 # useUser, useHabit, useColorScheme, useThemeColor
+        ├── services/              # API clients (habit, quest, store, ai, …)
+        ├── store/                 # OnboardingContext (React Context)
+        └── utils/                 # habitActions, habitStatus, habitTimer, …
+```
+
+**Rule for adding new files:**
+- New API resource → `Backend/src/routes/<resource>.js` + mount in `src/index.js`
+- New screen → `Frontend/app/<group>/<screen>.jsx` (Expo Router auto-discovers)
+- New reusable component → `Frontend/src/components/<auth|dashboard|habits|layout|ui>/`
+- New hook → `Frontend/src/hooks/useXxx.js` (camelCase)
+- New service call → `Frontend/src/services/<resource>.service.js`
 
 ## Product Snapshot
 
@@ -195,16 +260,16 @@ The frontend probes `/api/health` and uses the first healthy backend candidate.
 
 ## Supabase OAuth Notes
 
-The app declares Expo scheme `project` in `Frontend/app.json`, but the actual redirect URL depends on runtime:
+The app declares Expo scheme `habitforge` in `Frontend/app.json`, but the actual redirect URL depends on runtime:
 
-- development build / standalone app: typically `project://auth-callback`
+- development build / standalone app: typically `habitforge://auth-callback`
 - Expo Go: typically an `exp://.../--/auth-callback` URL
 
-Current frontend OAuth logic lives in `Frontend/src/services/supabaseAuth.js` and now uses `expo-auth-session` to generate the redirect URL more reliably for Expo Go.
+Current frontend OAuth logic lives in `Frontend/src/services/supabase.js` and uses `expo-auth-session` to generate the redirect URL more reliably for Expo Go.
 
 Supabase configuration guidance:
 
-- `Site URL`: `project://auth-callback`
+- `Site URL`: `habitforge://auth-callback`
 - `Redirect URLs`: add the exact runtime URL printed by the app during OAuth in Expo Go, or a matching wildcard pattern if your Supabase setup supports it safely
 
 If OAuth works in a build but not in Expo Go, the most common cause is that Supabase `Redirect URLs` do not match the real `exp://...` redirect URL.
