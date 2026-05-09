@@ -4,7 +4,7 @@ import Card from '@/src/components/ui/Card';
 import { Text } from '@/src/components/ui/Text';
 import { colors } from '@/src/constants/colors';
 import { spacing } from '@/src/constants/theme';
-import PrimaryButton from '@/src/components/PrimaryButton';
+import PrimaryButton from '@/src/components/ui/PrimaryButton';
 export default function EmptyStateCard({ title, description, actionLabel, onAction }) {
     return (<Card style={styles.card}>
       <View style={styles.iconWrap}>

@@ -3,7 +3,7 @@ import {
   completeOAuthSignInFromRedirect,
   signInWithOAuth,
   signOutFromSupabase,
-} from "@/src/services/supabaseAuth";
+} from "@/src/services/supabase";
 
 function signInWithProvider(provider) {
   return signInWithOAuth(provider);

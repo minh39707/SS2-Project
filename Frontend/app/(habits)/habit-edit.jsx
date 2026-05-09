@@ -1,1 +1,1 @@
-export { default } from "@/src/screens/habits/CreateHabitScreen";
+export { default } from "@/src/components/habits/CreateHabitScreen";

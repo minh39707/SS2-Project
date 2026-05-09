@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { FlatList, StyleSheet, View, Pressable } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { Text } from './ui/Text';
+import { Text } from './Text';
 import { colors } from '@/src/constants/colors';
 
 const ITEM_HEIGHT = 44;

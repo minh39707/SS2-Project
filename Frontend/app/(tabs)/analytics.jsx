@@ -18,8 +18,8 @@ import {
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle, G, Path, Defs, LinearGradient, Stop, Text as SvgText } from "react-native-svg";
-import EmptyStateCard from "@/src/components/EmptyStateCard";
-import ScreenContainer from "@/src/components/ScreenContainer";
+import EmptyStateCard from "@/src/components/ui/EmptyStateCard";
+import ScreenContainer from "@/src/components/ui/ScreenContainer";
 import Card from "@/src/components/ui/Card";
 import { Text } from "@/src/components/ui/Text";
 import { colors } from "@/src/constants/colors";

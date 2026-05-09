@@ -5,7 +5,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Text } from '@/src/components/ui/Text';
 import { colors } from '@/src/constants/colors';
 import { fonts, radii, shadows, spacing } from '@/src/constants/theme';
-import ScreenContainer from '@/src/components/ScreenContainer';
+import ScreenContainer from '@/src/components/ui/ScreenContainer';
 import { useRouter } from 'expo-router';
 export const authPalette = {
     accent: '#1E6DEB',

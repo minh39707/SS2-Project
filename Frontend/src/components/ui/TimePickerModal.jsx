@@ -3,9 +3,9 @@ import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { Text } from '@/src/components/ui/Text';
 import { colors } from '@/src/constants/colors';
 import { spacing } from '@/src/constants/theme';
-import PrimaryButton from '@/src/components/PrimaryButton';
-import SecondaryButton from '@/src/components/SecondaryButton';
-import WheelPicker from '@/src/components/WheelPicker';
+import PrimaryButton from '@/src/components/ui/PrimaryButton';
+import SecondaryButton from '@/src/components/ui/SecondaryButton';
+import WheelPicker from '@/src/components/ui/WheelPicker';
 import { fromTimePickerParts, toTimePickerParts } from '@/src/utils/onboarding';
 
 const HOURS = Array.from({ length: 12 }, (_, index) => index + 1);

@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from '@/src/components/ui/Text';
 import { colors } from '@/src/constants/colors';
 import { radii, spacing } from '@/src/constants/theme';
-import ProgressBar from '@/src/components/ProgressBar';
+import ProgressBar from '@/src/components/ui/ProgressBar';
 export default function BackHeader({ step, totalSteps, onBack }) {
     const handlePress = () => {
         void Haptics.selectionAsync();

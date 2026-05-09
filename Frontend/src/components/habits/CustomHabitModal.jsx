@@ -3,8 +3,8 @@ import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, TextInput
 import { Text } from '@/src/components/ui/Text';
 import { colors } from '@/src/constants/colors';
 import { radii, spacing } from '@/src/constants/theme';
-import PrimaryButton from '@/src/components/PrimaryButton';
-import SecondaryButton from '@/src/components/SecondaryButton';
+import PrimaryButton from '@/src/components/ui/PrimaryButton';
+import SecondaryButton from '@/src/components/ui/SecondaryButton';
 export default function CustomHabitModal({ visible, initialValue = '', onClose, onSave }) {
     const [value, setValue] = useState(initialValue);
     const [error, setError] = useState(null);
