@@ -194,7 +194,7 @@ function normalizeAnalyticsReport(payload) {
       'Chua co du thong tin de tao tom tat chi tiet.',
     ),
     key_metrics: normalizeMetricList(payload?.key_metrics),
-    strengths: normalizeList(payload?.strengths, ['Ban da co du lieu de theo doi tien do.']),
+    strengths: normalizeList(payload?.strengths, ['Bạn đã có dữ liệu để theo dõi tiến độ.']),
     risks: normalizeList(payload?.risks, ['Chua co tin hieu rui ro ro rang tu du lieu hien co.']),
     recommendations: normalizeList(payload?.recommendations, [
       'Tiep tuc check-in deu de bao cao sau chinh xac hon.',

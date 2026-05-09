@@ -1,23 +1,19 @@
-const { callLocalAi } = require('./localAi');
+const { callGemini } = require('./gemini');
 
-function getAiProvider() {
-  return 'ollama';
+function getDefaultChatModel() {
+  return process.env.GEMINI_CHAT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 }
 
-function getDefaultModel(kind = 'chat') {
-  return (
-    (kind === 'task' ? process.env.OLLAMA_TASK_MODEL : process.env.OLLAMA_CHAT_MODEL) ||
-    process.env.OLLAMA_MODEL ||
-    'qwen3:8b'
-  );
+function getDefaultTaskModel() {
+  return process.env.GEMINI_TASK_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 }
 
 async function callAiModel(options = {}) {
-  return callLocalAi(options);
+  return callGemini(options);
 }
 
 module.exports = {
   callAiModel,
-  getAiProvider,
-  getDefaultModel,
+  getDefaultChatModel,
+  getDefaultTaskModel,
 };

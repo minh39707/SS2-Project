@@ -1,5 +1,5 @@
 const DEFAULT_TIMEOUT_MS = 45000;
-const DEFAULT_MODEL = process.env.GEMINI_REPORT_MODEL || 'gemini-2.0-flash';
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const JSON_RETRY_SUFFIX = [
   'Return exactly one complete JSON object.',
   'Do not include markdown fences, explanations, or trailing text.',
@@ -51,7 +51,7 @@ async function requestGemini({
   maxOutputTokens,
 }) {
   const controller = new AbortController();
-  const timeoutMs = readIntegerEnv('GEMINI_REPORT_TIMEOUT_MS', DEFAULT_TIMEOUT_MS, {
+  const timeoutMs = readIntegerEnv('GEMINI_TIMEOUT_MS', DEFAULT_TIMEOUT_MS, {
     min: 5000,
     max: 120000,
   });
